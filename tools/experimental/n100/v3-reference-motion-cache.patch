@@ -1,0 +1,88 @@
+diff --git a/libvmaf/src/feature/integer_motion.c b/libvmaf/src/feature/integer_motion.c
+index b5a29d2f..25544ec3 100644
+--- a/libvmaf/src/feature/integer_motion.c
++++ b/libvmaf/src/feature/integer_motion.c
+@@ -18,7 +18,9 @@
+ 
+ 
+ #include <errno.h>
++#include <pthread.h>
+ #include <stddef.h>
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ 
+@@ -52,6 +54,20 @@ typedef uint64_t (*motion_pipeline_fn)(const uint8_t *, ptrdiff_t,
+                                        int32_t *, unsigned, unsigned,
+                                        unsigned bpc);
+ 
++/* Experimental process-local cache for a single-reference, multi-output
++ * FFmpeg graph. Pointer matching deliberately prevents reuse across pictures
++ * or independently decoded references. This is not a general VMAF API. */
++#define N100_MOTION_CACHE_CAP 20000
++static pthread_mutex_t n100_motion_cache_lock = PTHREAD_MUTEX_INITIALIZER;
++static struct {
++    const uint8_t *prev, *cur;
++    ptrdiff_t prev_stride, cur_stride;
++    unsigned w, h, bpc;
++    uint64_t sad;
++    int valid;
++} n100_motion_cache[N100_MOTION_CACHE_CAP];
++static unsigned n100_motion_computed, n100_motion_reused;
++
+ typedef struct MotionState {
+ #if HAVE_INTEL_OPENCL
+     VmafIntelOcl *intel_ocl;
+@@ -350,9 +366,39 @@ static int extract(VmafFeatureExtractor *fex,
+         if (intel_rc < 0) return intel_rc;
+         if (!intel_rc)
+ #endif
+-        sad = s->pipeline(prev_data, prev->stride[0],
+-    			       cur_data, ref_pic->stride[0],
+-    			       s->y_row, w, h, s->bpc);
++        {
++            const char *share = getenv("VMAF_N100_SHARED_MOTION");
++            const int enabled = share && share[0] == '1' && index < N100_MOTION_CACHE_CAP;
++            if (enabled) pthread_mutex_lock(&n100_motion_cache_lock);
++            if (enabled && n100_motion_cache[index].valid &&
++                n100_motion_cache[index].prev == prev_data &&
++                n100_motion_cache[index].cur == cur_data &&
++                n100_motion_cache[index].prev_stride == prev->stride[0] &&
++                n100_motion_cache[index].cur_stride == ref_pic->stride[0] &&
++                n100_motion_cache[index].w == w &&
++                n100_motion_cache[index].h == h &&
++                n100_motion_cache[index].bpc == s->bpc) {
++                sad = n100_motion_cache[index].sad;
++                n100_motion_reused++;
++            } else {
++                sad = s->pipeline(prev_data, prev->stride[0],
++                                  cur_data, ref_pic->stride[0],
++                                  s->y_row, w, h, s->bpc);
++                if (enabled) {
++                    n100_motion_cache[index].prev = prev_data;
++                    n100_motion_cache[index].cur = cur_data;
++                    n100_motion_cache[index].prev_stride = prev->stride[0];
++                    n100_motion_cache[index].cur_stride = ref_pic->stride[0];
++                    n100_motion_cache[index].w = w;
++                    n100_motion_cache[index].h = h;
++                    n100_motion_cache[index].bpc = s->bpc;
++                    n100_motion_cache[index].sad = sad;
++                    n100_motion_cache[index].valid = 1;
++                    n100_motion_computed++;
++                }
++            }
++            if (enabled) pthread_mutex_unlock(&n100_motion_cache_lock);
++        }
+     
+         score = MIN((double)sad / 256. / (w * h) * s->motion_fps_weight,
+     		s->motion_max_val);
+@@ -376,6 +422,9 @@ write_score:
+ static int close_fex(VmafFeatureExtractor *fex)
+ {
+     MotionState *s = fex->priv;
++    if (getenv("VMAF_N100_SHARED_MOTION"))
++        fprintf(stderr, "N100 shared reference motion: computed=%u reused=%u\n",
++                n100_motion_computed, n100_motion_reused);
+ #if HAVE_INTEL_OPENCL
+     vmaf_intel_ocl_destroy(&s->intel_ocl);
+ #endif

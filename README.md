@@ -1,5 +1,23 @@
 # VMAF - Video Multi-Method Assessment Fusion
 
+> **Experimental Intel N100 v3 test (English)** — With two CPU cores and VAAPI
+> decoding, sharing one reference decode and reference Motion work across three
+> concurrent VMAF comparisons cut total time versus the originally installed
+> FFmpeg by **37.81%** and **37.19%** on two 1920×1080 8-bit input sets
+> (3 × 300 frames, three-run medians). Recorded metrics matched at JSON output
+> precision. Full-length checks showed bounded memory use, but full-length
+> installed-to-v3 speed was not measured. This is a controlled proof of concept;
+> see the [v3 report](resource/doc/intel_n100_vmaf_v3_reference_sharing.md)
+> and [experimental Motion patch](tools/experimental/n100/v3-reference-motion-cache.patch).
+>
+> **Intel N100 v3 테스트 (한국어)** — CPU 두 코어와 VAAPI 디코딩을 사용하면서 원본
+> 디코딩 및 원본 Motion 계산을 세 비교에 공유했다. 기존 설치 FFmpeg의 순차 세 비교
+> 대비 전체 시간이 두 1920×1080 8-bit 입력에서 각각 **37.81%**, **37.19%**
+> 줄었다(각 300프레임, 3회 중앙값). 기록된 지표는 JSON 출력 정밀도에서 일치했다.
+> 전편에서는 메모리 사용이 일정 범위에 머무는지 확인했으며 설치본 대비 전편 속도는
+> 측정하지 않았다. 통제된 시제품의 조건과 제한은 [v3 보고서](resource/doc/intel_n100_vmaf_v3_reference_sharing.md)와
+> [Motion 실험 패치](tools/experimental/n100/v3-reference-motion-cache.patch)에 있다.
+
 > **Experimental Intel N100 v2 test (English)** — This isolated FFmpeg/libvmaf
 > experiment is not an upstream release or a production installation. With each
 > process pinned to two CPU cores, VMAF using two threads, and one decoder

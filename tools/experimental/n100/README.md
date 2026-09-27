@@ -40,6 +40,7 @@ regular FFmpeg or libvmaf source tree.
 | FFmpeg picture pool | ffmpeg-picture-pool.patch | Add an optional reusable input-picture pool. Off by default. |
 | AVFrame picture import | picture-import.patch, ffmpeg-picture-wrap.patch | Retain refcounted input buffers and avoid the FFmpeg-to-libvmaf pixel copy on supported planar frames. Off by default. |
 | VAAPI mapping | ffmpeg-hwmap-detach-sw.patch | Permit read-only VAAPI-to-NV12 mapping to feed the software conversion path. Off by default. |
+| v3 shared-reference Motion | v3-reference-motion-cache.patch | Experimental process-local Motion SAD reuse for one reference split to three comparisons. Enabled by VMAF_N100_SHARED_MOTION=1; see the [v3 report](../../../resource/doc/intel_n100_vmaf_v3_reference_sharing.md) for limits and results. |
 
 The direct mapping patch accepts only forward read mappings; it is not a
 general writable mapping facility. Picture import is bounded to 1920x1080

@@ -1,23 +1,31 @@
 # VMAF - Video Multi-Method Assessment Fusion
 
 > **Experimental Intel N100 v4 test (English)** — With two CPU cores and VAAPI
-> decoding, the v4 shared-reference pipeline completed three 300-frame
-> comparisons with **37.53%** and **37.70%** less elapsed time than the
-> originally installed FFmpeg on two 1920×1080 8-bit input sets (three-run
-> medians). Recorded VMAF metrics matched at JSON output precision. Relative
-> to v3, [ADM buffer reuse inspired by issue #959](tools/experimental/n100/v4-adm-buffer-reuse.patch)
-> lowered peak RSS by about 21 MB without a demonstrated speed gain. See the
-> [v4 report](resource/doc/intel_n100_vmaf_v4_adm_memory.ko.md) for conditions
-> and limits. The separate score-changing #952 experiment is not part of v4.
+> decoding, v4 combines shared-reference work, [ADM buffer reuse from issue
+> #959](tools/experimental/n100/v4-adm-buffer-reuse.patch), and [gain-one ADM
+> clipping from issue #952](tools/experimental/n100/v4-adm-gain1-clip.patch).
+> Three 300-frame comparisons took **42.225 → 23.210 s (45.03% less time)**
+> and **42.123 → 22.997 s (45.41% less time)** versus the installed FFmpeg
+> (three-run medians). Input A: 1920×1080 8-bit, 24000/1001 fps, about
+> 4 min 7 s; input B: 1920×1080 8-bit, 60000/1001 fps, about 3 min 13 s.
+> **Scores are not identical:** maximum per-frame VMAF differences over the
+> full inputs were **0.002454** and **0.002151 points**, with pooled mean
+> differences **+0.001816** and **+0.001401 points** against an existing v2
+> full-length oracle for one quality. These differences do not accumulate.
+> See the [v4 report](resource/doc/intel_n100_vmaf_v4_adm_memory.ko.md) for
+> conditions, memory measurements, and validation limits.
 >
-> **Intel N100 v4 테스트 (한국어)** — CPU 두 코어와 VAAPI 디코딩 조건에서 v4 원본
-> 공유 경로는 설치된 오리지널 FFmpeg보다 300프레임×3개 비교의 전체 시간이 두
-> 1920×1080 8-bit 입력에서 각각 **37.53%**, **37.70%** 짧았다(3회 중앙값).
-> 기록된 VMAF 지표는 JSON 출력 정밀도에서 일치했다. [이슈 #959를 참고한 ADM
-> 버퍼 재사용](tools/experimental/n100/v4-adm-buffer-reuse.patch)은 v3 대비
-> 최대 RSS를 약 21MB 줄였으나 속도 이득은 확인되지 않았다. 조건과 제한은
-> [v4 보고서](resource/doc/intel_n100_vmaf_v4_adm_memory.ko.md)에 있다.
-> 점수가 달라지는 별도 #952 실험은 v4에 포함하지 않았다.
+> **Intel N100 v4 테스트 (한국어)** — CPU 두 코어와 VAAPI 디코딩 조건에서
+> [이슈 #959의 ADM 버퍼 재사용](tools/experimental/n100/v4-adm-buffer-reuse.patch)과
+> [이슈 #952의 gain=1 ADM 단순화](tools/experimental/n100/v4-adm-gain1-clip.patch)를
+> 원본 공유 경로에 결합했다. 설치 FFmpeg 대비 300프레임×3개 비교 시간은
+> **42.225→23.210초(45.03% 단축)**, **42.123→22.997초(45.41% 단축)**였다
+> (3회 중앙값). A는 1920×1080 8-bit·24000/1001fps·약 4분 7초,
+> B는 1920×1080 8-bit·60000/1001fps·약 3분 13초다.
+> **점수는 완전히 같지 않다.** 기존 v2의 중간 품질 전편 결과와 비교한
+> 프레임별 VMAF 최대 차이는 **0.002454점**, **0.002151점**, 영상 평균 차이는
+> **+0.001816점**, **+0.001401점**이었다. 프레임별 차이는 누적되지 않는다.
+> 조건·메모리·검증 범위는 [v4 보고서](resource/doc/intel_n100_vmaf_v4_adm_memory.ko.md)에 있다.
 
 > **Experimental Intel N100 v3 test (English)** — With two CPU cores and VAAPI
 > decoding, sharing one reference decode and reference Motion work across three

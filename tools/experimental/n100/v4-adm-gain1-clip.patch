@@ -1,0 +1,99 @@
+diff --git a/libvmaf/src/feature/x86/adm_avx2.c b/libvmaf/src/feature/x86/adm_avx2.c
+index 5e793eed..483a3651 100644
+--- a/libvmaf/src/feature/x86/adm_avx2.c
++++ b/libvmaf/src/feature/x86/adm_avx2.c
+@@ -719,6 +719,33 @@ void adm_decouple_avx2(AdmBuffer *buf, int w, int h, int stride,
+ 
+     for (int i = top; i < bottom; ++i) {
+         for (int j = left; j < right_mod8; j+=8) {
++            if (adm_enhn_gain_limit == 1.0) {
++                const __m256i zero = _mm256_setzero_si256();
++                __m256i oh = _mm256_cvtepi16_epi32(_mm_loadu_si128((const __m128i *)(ref->band_h + i * stride + j)));
++                __m256i ov = _mm256_cvtepi16_epi32(_mm_loadu_si128((const __m128i *)(ref->band_v + i * stride + j)));
++                __m256i od = _mm256_cvtepi16_epi32(_mm_loadu_si128((const __m128i *)(ref->band_d + i * stride + j)));
++                __m256i th = _mm256_cvtepi16_epi32(_mm_loadu_si128((const __m128i *)(dis->band_h + i * stride + j)));
++                __m256i tv = _mm256_cvtepi16_epi32(_mm_loadu_si128((const __m128i *)(dis->band_v + i * stride + j)));
++                __m256i td = _mm256_cvtepi16_epi32(_mm_loadu_si128((const __m128i *)(dis->band_d + i * stride + j)));
++                __m256i rh = _mm256_max_epi32(_mm256_min_epi32(th, _mm256_max_epi32(oh, zero)), _mm256_min_epi32(oh, zero));
++                __m256i rv = _mm256_max_epi32(_mm256_min_epi32(tv, _mm256_max_epi32(ov, zero)), _mm256_min_epi32(ov, zero));
++                __m256i rd = _mm256_max_epi32(_mm256_min_epi32(td, _mm256_max_epi32(od, zero)), _mm256_min_epi32(od, zero));
++                __m256i ah = _mm256_sub_epi32(th, rh), av = _mm256_sub_epi32(tv, rv), ad = _mm256_sub_epi32(td, rd);
++                rh = _mm256_packs_epi32(rh, _mm256_permute4x64_epi64(rh, 0x0E));
++                rv = _mm256_packs_epi32(rv, _mm256_permute4x64_epi64(rv, 0x0E));
++                rd = _mm256_packs_epi32(rd, _mm256_permute4x64_epi64(rd, 0x0E));
++                ah = _mm256_packs_epi32(ah, _mm256_permute4x64_epi64(ah, 0x0E));
++                av = _mm256_packs_epi32(av, _mm256_permute4x64_epi64(av, 0x0E));
++                ad = _mm256_packs_epi32(ad, _mm256_permute4x64_epi64(ad, 0x0E));
++                _mm_storeu_si128((__m128i *)(r->band_h + i * stride + j), _mm256_castsi256_si128(rh));
++                _mm_storeu_si128((__m128i *)(r->band_v + i * stride + j), _mm256_castsi256_si128(rv));
++                _mm_storeu_si128((__m128i *)(r->band_d + i * stride + j), _mm256_castsi256_si128(rd));
++                _mm_storeu_si128((__m128i *)(a->band_h + i * stride + j), _mm256_castsi256_si128(ah));
++                _mm_storeu_si128((__m128i *)(a->band_v + i * stride + j), _mm256_castsi256_si128(av));
++                _mm_storeu_si128((__m128i *)(a->band_d + i * stride + j), _mm256_castsi256_si128(ad));
++                continue;
++            }
++
+             __m256i oh = _mm256_cvtepi16_epi32(_mm_loadu_si128((__m128i*)(ref->band_h + i * stride + j)));
+             __m256i ov = _mm256_cvtepi16_epi32(_mm_loadu_si128((__m128i*)(ref->band_v + i * stride + j)));
+             __m256i od = _mm256_cvtepi16_epi32(_mm_loadu_si128((__m128i*)(ref->band_d + i * stride + j)));
+@@ -901,6 +928,16 @@ void adm_decouple_avx2(AdmBuffer *buf, int w, int h, int stride,
+ 
+         for (int j = right_mod8; j < right; j++)
+         {
++            if (adm_enhn_gain_limit == 1.0) {
++                int32_t oh = ref->band_h[i * stride + j], ov = ref->band_v[i * stride + j], od = ref->band_d[i * stride + j];
++                int32_t th = dis->band_h[i * stride + j], tv = dis->band_v[i * stride + j], td = dis->band_d[i * stride + j];
++                int32_t rh = MAX(MIN(th, MAX(oh, 0)), MIN(oh, 0));
++                int32_t rv = MAX(MIN(tv, MAX(ov, 0)), MIN(ov, 0));
++                int32_t rd = MAX(MIN(td, MAX(od, 0)), MIN(od, 0));
++                r->band_h[i * stride + j] = rh; r->band_v[i * stride + j] = rv; r->band_d[i * stride + j] = rd;
++                a->band_h[i * stride + j] = th - rh; a->band_v[i * stride + j] = tv - rv; a->band_d[i * stride + j] = td - rd;
++                continue;
++            }
+             int16_t oh = ref->band_h[i * stride + j];
+             int16_t ov = ref->band_v[i * stride + j];
+             int16_t od = ref->band_d[i * stride + j];
+@@ -1482,6 +1519,26 @@ void adm_decouple_s123_avx2(AdmBuffer *buf, int w, int h, int stride,
+     {
+         for (int j = left; j < right_mod8; j += 8)
+         {
++            if (adm_enhn_gain_limit == 1.0) {
++                const __m256i zero = _mm256_setzero_si256();
++                __m256i oh = _mm256_loadu_si256((const __m256i *)(ref->band_h + i * stride + j));
++                __m256i ov = _mm256_loadu_si256((const __m256i *)(ref->band_v + i * stride + j));
++                __m256i od = _mm256_loadu_si256((const __m256i *)(ref->band_d + i * stride + j));
++                __m256i th = _mm256_loadu_si256((const __m256i *)(dis->band_h + i * stride + j));
++                __m256i tv = _mm256_loadu_si256((const __m256i *)(dis->band_v + i * stride + j));
++                __m256i td = _mm256_loadu_si256((const __m256i *)(dis->band_d + i * stride + j));
++                __m256i rh = _mm256_max_epi32(_mm256_min_epi32(th, _mm256_max_epi32(oh, zero)), _mm256_min_epi32(oh, zero));
++                __m256i rv = _mm256_max_epi32(_mm256_min_epi32(tv, _mm256_max_epi32(ov, zero)), _mm256_min_epi32(ov, zero));
++                __m256i rd = _mm256_max_epi32(_mm256_min_epi32(td, _mm256_max_epi32(od, zero)), _mm256_min_epi32(od, zero));
++                _mm256_storeu_si256((__m256i *)(r->band_h + i * stride + j), rh);
++                _mm256_storeu_si256((__m256i *)(r->band_v + i * stride + j), rv);
++                _mm256_storeu_si256((__m256i *)(r->band_d + i * stride + j), rd);
++                _mm256_storeu_si256((__m256i *)(a->band_h + i * stride + j), _mm256_sub_epi32(th, rh));
++                _mm256_storeu_si256((__m256i *)(a->band_v + i * stride + j), _mm256_sub_epi32(tv, rv));
++                _mm256_storeu_si256((__m256i *)(a->band_d + i * stride + j), _mm256_sub_epi32(td, rd));
++                continue;
++            }
++
+             // oh, ov, od, th, tv, td as int32 * 8 elements
+             __m256i oh_epi32 = _mm256_loadu_si256((__m256i*)(ref->band_h + i * stride + j));
+             __m256i ov_epi32 = _mm256_loadu_si256((__m256i*)(ref->band_v + i * stride + j));
+@@ -1781,6 +1838,16 @@ void adm_decouple_s123_avx2(AdmBuffer *buf, int w, int h, int stride,
+ 
+         for (int j = right_mod8; j < right; ++j)
+         {
++            if (adm_enhn_gain_limit == 1.0) {
++                int32_t oh = ref->band_h[i * stride + j], ov = ref->band_v[i * stride + j], od = ref->band_d[i * stride + j];
++                int32_t th = dis->band_h[i * stride + j], tv = dis->band_v[i * stride + j], td = dis->band_d[i * stride + j];
++                int32_t rh = MAX(MIN(th, MAX(oh, 0)), MIN(oh, 0));
++                int32_t rv = MAX(MIN(tv, MAX(ov, 0)), MIN(ov, 0));
++                int32_t rd = MAX(MIN(td, MAX(od, 0)), MIN(od, 0));
++                r->band_h[i * stride + j] = rh; r->band_v[i * stride + j] = rv; r->band_d[i * stride + j] = rd;
++                a->band_h[i * stride + j] = th - rh; a->band_v[i * stride + j] = tv - rv; a->band_d[i * stride + j] = td - rd;
++                continue;
++            }
+             int32_t oh = ref->band_h[i * stride + j];
+             int32_t ov = ref->band_v[i * stride + j];
+             int32_t od = ref->band_d[i * stride + j];

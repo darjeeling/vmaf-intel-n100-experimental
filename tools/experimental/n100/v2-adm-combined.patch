@@ -1,0 +1,956 @@
+diff --git a/libvmaf/src/feature/cuda/integer_adm/adm_cm.cu b/libvmaf/src/feature/cuda/integer_adm/adm_cm.cu
+--- a/libvmaf/src/feature/cuda/integer_adm/adm_cm.cu
++++ b/libvmaf/src/feature/cuda/integer_adm/adm_cm.cu
+@@ -200,7 +200,7 @@
+                             thr[thread_item] += flt_row[1];
+                         }
+                         else {
+-                            thr[thread_item] += (int16_t)(((ONE_BY_15 * abs((int32_t)src)) + 2048) >> 12);;
++                            thr[thread_item] += ((ONE_BY_15 * abs((int32_t)src) + 2048) >> 12);
+                         }
+                     }
+                 }
+@@ -216,8 +216,12 @@
+         if ((y + row) < end_row && x < end_col) {
+             sb = src_band[(y + row) * src_stride + x];
+         }
+-        sb = abs(int32_t(i_rfactor[blockIdx.z] * sb)) - (thr[row] << shift_sub_block);
+-        accum_thread_reg[row] = max(0, sb);
++        sb = int32_t(i_rfactor[blockIdx.z] * sb);
++        const int64_t sb_magnitude = sb < 0 ? -(int64_t)sb : (int64_t)sb;
++        const int64_t sb_after_threshold =
++            sb_magnitude - (int64_t)thr[row] * ((int64_t)1 << shift_sub_block);
++        accum_thread_reg[row] = sb_after_threshold <= 0 ? 0 :
++            sb_after_threshold > INT32_MAX ? INT32_MAX : (int32_t)sb_after_threshold;
+     }
+ 
+     const int band2 = blockIdx.z;
+diff --git a/libvmaf/src/feature/integer_adm.c b/libvmaf/src/feature/integer_adm.c
+--- a/libvmaf/src/feature/integer_adm.c
++++ b/libvmaf/src/feature/integer_adm.c
+@@ -266,7 +266,7 @@
+ 		sum += flt_ptr[src_stride]; \
+ 		sum += flt_ptr[src_stride + 1]; \
+ 		sum += flt_ptr[1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[0]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[0]) + 2048) >> 12);\
+ 		sum += flt_ptr[1]; \
+ 		sum += flt_ptr[src_stride + 1]; \
+ 		sum += flt_ptr[src_stride]; \
+@@ -287,7 +287,7 @@
+ 		sum += flt_ptr[src_stride + w - 1]; \
+ 		sum += flt_ptr[src_stride + w - 1]; \
+ 		sum += flt_ptr[w - 2]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]) + 2048) >> 12);\
+ 		sum += flt_ptr[w - 1]; \
+ 		sum += flt_ptr[src_stride + w - 2]; \
+ 		sum += flt_ptr[src_stride + w - 1]; \
+@@ -308,7 +308,7 @@
+ 		sum += flt_ptr[src_stride + j]; \
+ 		sum += flt_ptr[src_stride + j + 1]; \
+ 		sum += flt_ptr[j - 1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[j]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[j]) + 2048) >> 12);\
+ 		sum += flt_ptr[j + 1]; \
+ 		sum += flt_ptr[src_stride + j - 1]; \
+ 		sum += flt_ptr[src_stride + j]; \
+@@ -333,7 +333,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[0]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[0]) + 2048) >> 12);\
+ 		sum += flt_ptr[1]; \
+ 		sum += flt_ptr[1]; \
+ 		sum += flt_ptr[0]; \
+@@ -358,7 +358,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[w - 2]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]) + 2048) >> 12);\
+ 		sum += flt_ptr[w - 1]; \
+ 		sum += flt_ptr[w - 2]; \
+ 		sum += flt_ptr[w - 1]; \
+@@ -383,7 +383,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[j - 1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[j]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[j]) + 2048) >> 12);\
+ 		sum += flt_ptr[j + 1]; \
+ 		sum += flt_ptr[j - 1]; \
+ 		sum += flt_ptr[j]; \
+@@ -408,7 +408,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[j - 1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[j]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[j]) + 2048) >> 12);\
+ 		sum += flt_ptr[j + 1]; \
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+@@ -435,7 +435,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[0]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[0]) + 2048) >> 12);\
+ 		sum += flt_ptr[1]; \
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+@@ -462,7 +462,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[w - 2]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]) + 2048) >> 12);\
+ 		sum += flt_ptr[w - 1]; \
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+@@ -695,8 +695,11 @@
+ #define ADM_CM_ACCUM_ROUND(x, thr, shift_xsub, x_sq, add_shift_xsq, shift_xsq, val, \
+                            add_shift_xcub, shift_xcub, accum_inner) \
+ { \
+-    x = abs(x) - ((int32_t)(thr) << shift_xsub); \
+-    x = x < 0 ? 0 : x; \
++    const int64_t x_magnitude = x < 0 ? -(int64_t)x : (int64_t)x; \
++    const int64_t x_after_threshold = \
++        x_magnitude - (int64_t)thr * ((int64_t)1 << shift_xsub); \
++    x = x_after_threshold <= 0 ? 0 : \
++        x_after_threshold > INT32_MAX ? INT32_MAX : (int32_t)x_after_threshold; \
+     x_sq = (int32_t)((((int64_t)x * x) + add_shift_xsq) >> shift_xsq); \
+     val = (((int64_t)x_sq * x) + add_shift_xcub) >> shift_xcub; \
+     accum_inner += val; \
+diff --git a/libvmaf/src/feature/x86/adm_avx2.c b/libvmaf/src/feature/x86/adm_avx2.c
+--- a/libvmaf/src/feature/x86/adm_avx2.c
++++ b/libvmaf/src/feature/x86/adm_avx2.c
+@@ -42,7 +42,7 @@
+ 		sum += flt_ptr[src_stride]; \
+ 		sum += flt_ptr[src_stride + 1]; \
+ 		sum += flt_ptr[1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[0]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[0]) + 2048) >> 12);\
+ 		sum += flt_ptr[1]; \
+ 		sum += flt_ptr[src_stride + 1]; \
+ 		sum += flt_ptr[src_stride]; \
+@@ -63,7 +63,7 @@
+ 		sum += flt_ptr[src_stride + w - 1]; \
+ 		sum += flt_ptr[src_stride + w - 1]; \
+ 		sum += flt_ptr[w - 2]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]) + 2048) >> 12);\
+ 		sum += flt_ptr[w - 1]; \
+ 		sum += flt_ptr[src_stride + w - 2]; \
+ 		sum += flt_ptr[src_stride + w - 1]; \
+@@ -84,7 +84,7 @@
+ 		sum += flt_ptr[src_stride + j]; \
+ 		sum += flt_ptr[src_stride + j + 1]; \
+ 		sum += flt_ptr[j - 1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[j]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[j]) + 2048) >> 12);\
+ 		sum += flt_ptr[j + 1]; \
+ 		sum += flt_ptr[src_stride + j - 1]; \
+ 		sum += flt_ptr[src_stride + j]; \
+@@ -109,7 +109,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[0]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[0]) + 2048) >> 12);\
+ 		sum += flt_ptr[1]; \
+ 		sum += flt_ptr[1]; \
+ 		sum += flt_ptr[0]; \
+@@ -134,7 +134,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[w - 2]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]) + 2048) >> 12);\
+ 		sum += flt_ptr[w - 1]; \
+ 		sum += flt_ptr[w - 2]; \
+ 		sum += flt_ptr[w - 1]; \
+@@ -159,7 +159,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[j - 1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[j]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[j]) + 2048) >> 12);\
+ 		sum += flt_ptr[j + 1]; \
+ 		sum += flt_ptr[j - 1]; \
+ 		sum += flt_ptr[j]; \
+@@ -184,7 +184,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[j - 1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[j]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[j]) + 2048) >> 12);\
+ 		sum += flt_ptr[j + 1]; \
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+@@ -284,7 +284,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[0]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[0]) + 2048) >> 12);\
+ 		sum += flt_ptr[1]; \
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+@@ -311,7 +311,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[w - 2]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]) + 2048) >> 12);\
+ 		sum += flt_ptr[w - 1]; \
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+@@ -484,24 +484,15 @@
+         flt_ptr1 += src_stride; \
+         src_ptr2 += src_stride; \
+         flt_ptr2 += src_stride; \
+-        __m256i src01 = _mm256_cvtepi32_epi64(_mm_loadu_si128((__m128i*)(src_ptr0 + j - 1))); \
+-        __m256i src11 = _mm256_cvtepi32_epi64(_mm_loadu_si128((__m128i*)(src_ptr1 + j - 1))); \
+-        __m256i src21 = _mm256_cvtepi32_epi64(_mm_loadu_si128((__m128i*)(src_ptr2 + j - 1))); \
++        __m256i src01 = _mm256_cvtepu32_epi64(_mm_loadu_si128((__m128i*)(src_ptr0 + j - 1))); \
++        __m256i src11 = _mm256_cvtepu32_epi64(_mm_loadu_si128((__m128i*)(src_ptr1 + j - 1))); \
++        __m256i src21 = _mm256_cvtepu32_epi64(_mm_loadu_si128((__m128i*)(src_ptr2 + j - 1))); \
++        src01 = _mm256_abs_epi32(src01); \
++        src11 = _mm256_abs_epi32(src11); \
++        src21 = _mm256_abs_epi32(src21); \
+         __m256i flt01 = _mm256_cvtepi32_epi64(_mm_loadu_si128((__m128i*)(flt_ptr0 + j - 1))); \
+         __m256i flt11 = _mm256_cvtepi32_epi64(_mm_loadu_si128((__m128i*)(flt_ptr1 + j - 1))); \
+         __m256i flt21 = _mm256_cvtepi32_epi64(_mm_loadu_si128((__m128i*)(flt_ptr2 + j - 1))); \
+-        __m256i mask_src01_ltz = _mm256_cmpgt_epi64(_mm256_setzero_si256(), src01); \
+-        __m256i mask_src11_ltz = _mm256_cmpgt_epi64(_mm256_setzero_si256(), src11); \
+-        __m256i mask_src21_ltz = _mm256_cmpgt_epi64(_mm256_setzero_si256(), src21); \
+-        __m256i src01_us = _mm256_and_si256(_mm256_mul_epi32(src01, _mm256_set1_epi32(-1)), mask_src01_ltz); \
+-        __m256i src11_us = _mm256_and_si256(_mm256_mul_epi32(src11, _mm256_set1_epi32(-1)), mask_src11_ltz); \
+-        __m256i src21_us = _mm256_and_si256(_mm256_mul_epi32(src21, _mm256_set1_epi32(-1)), mask_src21_ltz); \
+-        src01 = _mm256_andnot_si256(mask_src01_ltz, src01); \
+-        src11 = _mm256_andnot_si256(mask_src11_ltz, src11); \
+-        src21 = _mm256_andnot_si256(mask_src21_ltz, src21); \
+-        src01 = _mm256_or_si256(src01, src01_us); \
+-        src11 = _mm256_or_si256(src11, src11_us); \
+-        src21 = _mm256_or_si256(src21, src21_us); \
+         __m256i i4_one_by_15 = _mm256_set1_epi64x(I4_ONE_BY_15); \
+         src01 = _mm256_add_epi64(_mm256_mul_epi32(src01, i4_one_by_15), add_bef_shift_256); \
+         src11 = _mm256_add_epi64(_mm256_mul_epi32(src11, i4_one_by_15), add_bef_shift_256); \
+@@ -633,8 +624,11 @@
+ #define ADM_CM_ACCUM_ROUND(x, thr, shift_xsub, x_sq, add_shift_xsq, shift_xsq, val, \
+                            add_shift_xcub, shift_xcub, accum_inner) \
+ { \
+-    x = abs(x) - ((int32_t)(thr) << shift_xsub); \
+-    x = x < 0 ? 0 : x; \
++    const int64_t x_magnitude = x < 0 ? -(int64_t)x : (int64_t)x; \
++    const int64_t x_after_threshold = \
++        x_magnitude - (int64_t)thr * ((int64_t)1 << shift_xsub); \
++    x = x_after_threshold <= 0 ? 0 : \
++        x_after_threshold > INT32_MAX ? INT32_MAX : (int32_t)x_after_threshold; \
+     x_sq = (int32_t)((((int64_t)x * x) + add_shift_xsq) >> shift_xsq); \
+     val = (((int64_t)x_sq * x) + add_shift_xcub) >> shift_xcub; \
+     accum_inner += val; \
+@@ -643,8 +637,11 @@
+ #define ADM_CM_ACCUM_ROUND_avx256(x, thr, shift_xsub, x_sq, add_shift_xsq, shift_xsq, val, \
+                            add_shift_xcub, shift_xcub, accum_inner_lo, accum_inner_hi) \
+ { \
++    __m256i threshold_overflow = _mm256_cmpgt_epi32( \
++        thr, _mm256_set1_epi32(INT32_MAX >> shift_xsub)); \
+     x = _mm256_sub_epi32(_mm256_abs_epi32(x), _mm256_slli_epi32(thr, shift_xsub)); \
+     x = _mm256_max_epi32(x, _mm256_setzero_si256()); \
++    x = _mm256_andnot_si256(threshold_overflow, x); \
+     __m256i x_sq_lo = _mm256_srli_epi64(_mm256_add_epi64(_mm256_mul_epi32(x, x), _mm256_set1_epi64x(add_shift_xsq)), shift_xsq); \
+     __m256i x_sq_hi = _mm256_srli_epi64(_mm256_add_epi64(_mm256_mul_epi32(_mm256_srli_epi64(x, 32), _mm256_srli_epi64(x, 32)), _mm256_set1_epi64x(add_shift_xsq)), shift_xsq); \
+     x_sq_lo = _mm256_srli_epi64(_mm256_add_epi64(_mm256_mul_epi32(x_sq_lo, x), _mm256_set1_epi64x(add_shift_xcub)), shift_xcub); \
+@@ -684,6 +681,11 @@
+                     cos_1deg_sq * ((float)o_mag_sq / 4096.0) * ((float)t_mag_sq / 4096.0))); \
+ } \
+ 
++static inline __m256i blend(__m256i a, __m256i b, __m256i mask)
++{
++    return _mm256_blendv_epi8(b, a, mask);
++}
++
+ void adm_decouple_avx2(AdmBuffer *buf, int w, int h, int stride,
+                          double adm_enhn_gain_limit, int32_t* adm_div_lookup)
+ {
+@@ -731,17 +733,29 @@
+             __m256i ot_dp_256 = _mm256_madd_epi16(oh_ov, th_tv);
+             __m256i t_mag_sq_256 = _mm256_madd_epi16(th_tv, th_tv);
+ 
+-            int angle_flag_r[8];
+-            calc_angle(_mm256_extract_epi32(ot_dp_256, 0), _mm256_extract_epi32(o_mag_sq_256, 0), _mm256_extract_epi32(t_mag_sq_256, 0), angle_flag_r[0]);
+-            calc_angle(_mm256_extract_epi32(ot_dp_256, 1), _mm256_extract_epi32(o_mag_sq_256, 1), _mm256_extract_epi32(t_mag_sq_256, 1), angle_flag_r[1]);
+-            calc_angle(_mm256_extract_epi32(ot_dp_256, 2), _mm256_extract_epi32(o_mag_sq_256, 2), _mm256_extract_epi32(t_mag_sq_256, 2), angle_flag_r[2]);
+-            calc_angle(_mm256_extract_epi32(ot_dp_256, 3), _mm256_extract_epi32(o_mag_sq_256, 3), _mm256_extract_epi32(t_mag_sq_256, 3), angle_flag_r[3]);
+-            calc_angle(_mm256_extract_epi32(ot_dp_256, 4), _mm256_extract_epi32(o_mag_sq_256, 4), _mm256_extract_epi32(t_mag_sq_256, 4), angle_flag_r[4]);
+-            calc_angle(_mm256_extract_epi32(ot_dp_256, 5), _mm256_extract_epi32(o_mag_sq_256, 5), _mm256_extract_epi32(t_mag_sq_256, 5), angle_flag_r[5]);
+-            calc_angle(_mm256_extract_epi32(ot_dp_256, 6), _mm256_extract_epi32(o_mag_sq_256, 6), _mm256_extract_epi32(t_mag_sq_256, 6), angle_flag_r[6]);
+-            calc_angle(_mm256_extract_epi32(ot_dp_256, 7), _mm256_extract_epi32(o_mag_sq_256, 7), _mm256_extract_epi32(t_mag_sq_256, 7), angle_flag_r[7]);
+-
+-            __m256i angle_flag = _mm256_mullo_epi32(_mm256_setr_epi32(angle_flag_r[0], angle_flag_r[1], angle_flag_r[2], angle_flag_r[3], angle_flag_r[4], angle_flag_r[5], angle_flag_r[6], angle_flag_r[7]), _mm256_set1_epi32(-1));
++            // <->  ot_dp * ot_dp >= cos(1deg) * (o_mag_sq * t_mag_sq)
++#define CALC_ANGLE_256(ot_dp, o_mag_sq, t_mag_sq) \
++                (__m256i)_mm256_cmp_pd(_mm256_mul_pd(ot_dp, ot_dp), \
++                _mm256_mul_pd(_mm256_mul_pd(_mm256_set1_pd(cos_1deg_sq), \
++                   o_mag_sq), t_mag_sq), 5)
++
++            // Get lo/hi floats as doubles
++#define SPLIT_TO_DOUBLES(v) \
++            __m256 v##_tmp = _mm256_cvtepi32_ps(v); \
++            __m256d v##_lo = _mm256_cvtps_pd(_mm256_castps256_ps128(v##_tmp)); \
++            __m256d v##_hi = _mm256_cvtps_pd(_mm256_extractf128_ps(v##_tmp, 1)); \
++
++            SPLIT_TO_DOUBLES(o_mag_sq_256);
++            SPLIT_TO_DOUBLES(ot_dp_256);
++            SPLIT_TO_DOUBLES(t_mag_sq_256);
++
++            __m256i angle_flag_lo = CALC_ANGLE_256(ot_dp_256_lo, o_mag_sq_256_lo, t_mag_sq_256_lo);
++            __m256i angle_flag_hi = CALC_ANGLE_256(ot_dp_256_hi, o_mag_sq_256_hi, t_mag_sq_256_hi);
++
++            __m256i angle_flag = _mm256_permute4x64_epi64(_mm256_packs_epi32(angle_flag_lo, angle_flag_hi), 0xD8);
++
++            __m256i ot_dp_negative = _mm256_cmpgt_epi32(_mm256_setzero_si256(), ot_dp_256);
++            angle_flag = _mm256_andnot_si256(ot_dp_negative, angle_flag);
+ 
+             __m256i const_32768_32b = _mm256_set1_epi32(32768);
+             __m256i const_16384_64b = _mm256_set1_epi64x(16384);
+@@ -770,22 +784,17 @@
+             shift15_64b_signExt_256(od_div_td_lo, od_div_td_lo);
+             shift15_64b_signExt_256(od_div_td_hi, od_div_td_hi);
+ 
+-            __m256i tmp_kh = _mm256_or_si256(_mm256_and_si256(oh_div_th_lo, _mm256_set1_epi64x(0xFFFFFFFF)), _mm256_slli_epi64(oh_div_th_hi, 32));
+-            __m256i tmp_kv = _mm256_or_si256(_mm256_and_si256(ov_div_tv_lo, _mm256_set1_epi64x(0xFFFFFFFF)), _mm256_slli_epi64(ov_div_tv_hi, 32));
+-            __m256i tmp_kd = _mm256_or_si256(_mm256_and_si256(od_div_td_lo, _mm256_set1_epi64x(0xFFFFFFFF)), _mm256_slli_epi64(od_div_td_hi, 32));
++            __m256i tmp_kh = _mm256_blend_epi32(oh_div_th_lo, _mm256_slli_epi64(oh_div_th_hi, 32), 0xAA);
++            __m256i tmp_kv = _mm256_blend_epi32(ov_div_tv_lo, _mm256_slli_epi64(ov_div_tv_hi, 32), 0xAA);
++            __m256i tmp_kd = _mm256_blend_epi32(od_div_td_lo, _mm256_slli_epi64(od_div_td_hi, 32), 0xAA);
+ 
+             __m256i eqz_oh = _mm256_cmpeq_epi32(oh, _mm256_setzero_si256());
+             __m256i eqz_ov = _mm256_cmpeq_epi32(ov, _mm256_setzero_si256());
+             __m256i eqz_od = _mm256_cmpeq_epi32(od, _mm256_setzero_si256());
+ 
+-            tmp_kh = _mm256_andnot_si256(eqz_oh, tmp_kh);
+-            tmp_kh = _mm256_or_si256(tmp_kh, _mm256_and_si256(const_32768_32b, eqz_oh));
+-
+-            tmp_kv = _mm256_andnot_si256(eqz_ov, tmp_kv);
+-            tmp_kv = _mm256_or_si256(tmp_kv, _mm256_and_si256(const_32768_32b, eqz_ov));
+-
+-            tmp_kd = _mm256_andnot_si256(eqz_od, tmp_kd);
+-            tmp_kd = _mm256_or_si256(tmp_kd, _mm256_and_si256(const_32768_32b, eqz_od));
++            tmp_kh = blend(const_32768_32b, tmp_kh, eqz_oh);
++			tmp_kv = blend(const_32768_32b, tmp_kv, eqz_ov);
++			tmp_kd = blend(const_32768_32b, tmp_kd, eqz_od);
+ 
+             tmp_kh = _mm256_max_epi32(tmp_kh, _mm256_setzero_si256());
+             tmp_kh = _mm256_min_epi32(tmp_kh, const_32768_32b);
+@@ -837,7 +846,7 @@
+             __m256i mask_rst_v = _mm256_and_si256(mask_min_max_v, angle_flag);
+             __m256i mask_rst_d = _mm256_and_si256(mask_min_max_d, angle_flag);
+ 
+-	    __m256d adm_gain_d = _mm256_set1_pd(adm_enhn_gain_limit);
++            __m256d adm_gain_d = _mm256_set1_pd(adm_enhn_gain_limit);
+             __m256d rst_h_gainlo_d = _mm256_mul_pd(_mm256_cvtepi32_pd(_mm256_extractf128_si256(rst_h, 0)), adm_gain_d);
+             __m256d rst_h_gainhi_d = _mm256_mul_pd(_mm256_cvtepi32_pd(_mm256_extractf128_si256(rst_h, 1)), adm_gain_d);
+             __m256i rst_h_gain = _mm256_insertf128_si256(_mm256_castsi128_si256(_mm256_cvtpd_epi32(rst_h_gainlo_d)), _mm256_cvtpd_epi32(rst_h_gainhi_d),1);
+@@ -863,17 +872,13 @@
+             d_min = _mm256_and_si256(d_min, gt0_rst_d_f);
+             d_max = _mm256_and_si256(d_max, lt0_rst_d_f);
+ 
+-            __m256i h_min_max = _mm256_and_si256(_mm256_or_si256(h_min, h_max), mask_rst_h);
+-            __m256i v_min_max = _mm256_and_si256(_mm256_or_si256(v_min, v_max), mask_rst_v);
+-            __m256i d_min_max = _mm256_and_si256(_mm256_or_si256(d_min, d_max), mask_rst_d);
+-
+-            rst_h = _mm256_andnot_si256(mask_rst_h, rst_h);
+-            rst_v = _mm256_andnot_si256(mask_rst_v, rst_v);
+-            rst_d = _mm256_andnot_si256(mask_rst_d, rst_d);
+-
+-            rst_h = _mm256_or_si256(h_min_max, rst_h);
+-            rst_v = _mm256_or_si256(v_min_max, rst_v);
+-            rst_d = _mm256_or_si256(d_min_max, rst_d);
++            __m256i h_min_max = _mm256_or_si256(h_min, h_max);
++            __m256i v_min_max = _mm256_or_si256(v_min, v_max);
++            __m256i d_min_max = _mm256_or_si256(d_min, d_max);
++
++            rst_h = blend(h_min_max, rst_h, mask_rst_h);
++            rst_v = blend(v_min_max, rst_v, mask_rst_v);
++            rst_d = blend(d_min_max, rst_d, mask_rst_d);
+ 
+             th = _mm256_sub_epi32(th, rst_h);
+             tv = _mm256_sub_epi32(tv, rst_v);
+@@ -1341,9 +1346,34 @@
+     return temp;
+ }
+ 
+-static inline __m256i blend(__m256i a, __m256i b, __m256i mask)
++// Trick adapted from https://stackoverflow.com/a/58827596
++// Additional requirement: sign bit of temp is never set and temp is nonzero
++static inline __m256i get_best15_from32_256(__m256i temp, __m256i* x)
+ {
+-    return _mm256_or_si256(_mm256_and_si256(mask, a), _mm256_andnot_si256(mask, b));
++    // Prevent incorrect rounding up from RNE
++    // The pathological case is when we have 24+ consecutive 1 bits
++    // at the start, so this clears enough of them
++    __m256i v = _mm256_andnot_si256(_mm256_srli_epi32(temp, 8), temp);
++    v = _mm256_castps_si256(_mm256_cvtepi32_ps(v));
++
++    // Extract FP exponent
++    v = _mm256_srli_epi32(v, 23);
++    // Example: clz(0xfffff) is 12, biased exponent is 146, we want
++    // k = 17 - 12 = 5, so we subtract 141.
++    __m256i k = _mm256_sub_epi32(v, _mm256_set1_epi32(141));
++    *x = k;
++
++    // we recast the rounding
++    //    temp = (temp + (1 << (k - 1))) >> k
++    // as
++    //    ((temp >> (k - 1)) + 1) >> 1
++    // hence we want a variable right shift of k - 1.
++
++    const __m256i Ones = _mm256_set1_epi32(1);
++    __m256i shifted = _mm256_srlv_epi32(temp, _mm256_sub_epi32(k, Ones));
++    shifted = _mm256_add_epi32(shifted, Ones);
++    shifted = _mm256_srli_epi32(shifted, 1);
++    return shifted;
+ }
+ 
+ static inline __m256i sra_epi64(__m256i a, __m256i mask)
+@@ -1385,6 +1415,27 @@
+ }
+ #endif
+ 
++// [ 0LL, 1LL, 2LL, 3LL ], [ 4LL, 5LL, 6LL, 7LL ]
++// ->
++// [ 0, 1, 2, 3, 4, 5, 6, 7 ]
++static inline __m256i merge_64_to_32(__m256i low, __m256i high) {
++	const __m256i Even = _mm256_setr_epi32(0, 2, 4, 6, 0, 2, 4, 6);
++
++	low = _mm256_permutevar8x32_epi32(low, Even);
++	high = _mm256_permutevar8x32_epi32(high, Even);
++
++	return _mm256_blend_epi32(low, high, 0xF0);
++}
++
++// Assumptions: v is in the valid int64 range
++// Credit: https://stackoverflow.com/a/41223013
++static inline __m256i double_to_64(__m256d v) {
++    const __m256d magic = _mm256_set1_pd(6755399441055744.0); // 2^52 + 2^51
++    v = _mm256_round_pd(v, _MM_FROUND_TO_ZERO | _MM_FROUND_NO_EXC);
++    return _mm256_sub_epi64(_mm256_castpd_si256(_mm256_add_pd(v, magic)),
++        _mm256_castpd_si256(magic));
++}
++
+ // No lzcnt in avx2
+ void adm_decouple_s123_avx2(AdmBuffer *buf, int w, int h, int stride,
+                               double adm_enhn_gain_limit, int32_t* adm_div_lookup)
+@@ -1439,7 +1490,7 @@
+             __m256i tv_epi32 = _mm256_loadu_si256((__m256i*)(dis->band_v + i * stride + j));
+             __m256i td_epi32 = _mm256_loadu_si256((__m256i*)(dis->band_d + i * stride + j));
+ 
+-			// oh, ov, od, th, tv, td as int64
++            // oh, ov, od, th, tv, td as int64
+             __m256i oh_lo_epi64 = _mm256_cvtepi32_epi64(_mm256_extracti128_si256(oh_epi32,0));
+             __m256i oh_hi_epi64 = _mm256_cvtepi32_epi64(_mm256_extracti128_si256(oh_epi32,1));
+             __m256i ov_lo_epi64 = _mm256_cvtepi32_epi64(_mm256_extracti128_si256(ov_epi32,0));
+@@ -1489,56 +1540,26 @@
+             __m256i kv_sign_epi32 = _mm256_or_si256(_mm256_cmpgt_epi32(_mm256_setzero_si256(), ov_epi32), const_1_epi32);
+             __m256i kd_sign_epi32 = _mm256_or_si256(_mm256_cmpgt_epi32(_mm256_setzero_si256(), od_epi32), const_1_epi32);
+ 
+-            // get_best15_from32 uses builtin_clz, which has not SIMD equivalent. We convert to scalar for the clz
+-            uint16_t tmp_kh_msb[8], tmp_kv_msb[8], tmp_kd_msb[8];
+-            int32_t tmp_kh_shift[8], tmp_kv_shift[8], tmp_kd_shift[8];
+-
+-            tmp_kh_msb[0] = get_best15_from32(_mm256_extract_epi32(abs_oh_epi32, 0), &tmp_kh_shift[0]);
+-            tmp_kh_msb[1] = get_best15_from32(_mm256_extract_epi32(abs_oh_epi32, 1), &tmp_kh_shift[1]);
+-            tmp_kh_msb[2] = get_best15_from32(_mm256_extract_epi32(abs_oh_epi32, 2), &tmp_kh_shift[2]);
+-            tmp_kh_msb[3] = get_best15_from32(_mm256_extract_epi32(abs_oh_epi32, 3), &tmp_kh_shift[3]);
+-            tmp_kh_msb[4] = get_best15_from32(_mm256_extract_epi32(abs_oh_epi32, 4), &tmp_kh_shift[4]);
+-            tmp_kh_msb[5] = get_best15_from32(_mm256_extract_epi32(abs_oh_epi32, 5), &tmp_kh_shift[5]);
+-            tmp_kh_msb[6] = get_best15_from32(_mm256_extract_epi32(abs_oh_epi32, 6), &tmp_kh_shift[6]);
+-            tmp_kh_msb[7] = get_best15_from32(_mm256_extract_epi32(abs_oh_epi32, 7), &tmp_kh_shift[7]);
+-
+-            // convert from scalar back to vector
+-            __m256i kh_shift_epi32 = _mm256_setr_epi32(tmp_kh_shift[0], tmp_kh_shift[1], tmp_kh_shift[2], tmp_kh_shift[3], tmp_kh_shift[4], tmp_kh_shift[5], tmp_kh_shift[6], tmp_kh_shift[7]);
+-            __m256i tmp_kh_msb_epi32 = _mm256_setr_epi32(tmp_kh_msb[0], tmp_kh_msb[1], tmp_kh_msb[2], tmp_kh_msb[3], tmp_kh_msb[4], tmp_kh_msb[5], tmp_kh_msb[6], tmp_kh_msb[7]);
+-
++            __m256i kh_shift_epi32;
++            __m256i tmp_kh_msb_epi32 = get_best15_from32_256(abs_oh_epi32, &kh_shift_epi32);
+             __m256i mask_kh_msb_epi32 = _mm256_cmpgt_epi32(const_32768_epi32, abs_oh_epi32);
++
+             // Where abs_oh < 32768, scalar uses oh directly (signed); the AVX-512
+             // path here blends abs_oh_epi32. AVX2 previously blended const_32768,
+             // producing small float-feature drift visible on 10-bit content.
+             __m256i kh_msb_epi32 = blend(abs_oh_epi32, tmp_kh_msb_epi32, mask_kh_msb_epi32);
+             kh_shift_epi32 = blend(_mm256_setzero_si256(), kh_shift_epi32, mask_kh_msb_epi32);
+ 
+-            tmp_kv_msb[0] = get_best15_from32(_mm256_extract_epi32(abs_ov_epi32, 0), &tmp_kv_shift[0]);
+-            tmp_kv_msb[1] = get_best15_from32(_mm256_extract_epi32(abs_ov_epi32, 1), &tmp_kv_shift[1]);
+-            tmp_kv_msb[2] = get_best15_from32(_mm256_extract_epi32(abs_ov_epi32, 2), &tmp_kv_shift[2]);
+-            tmp_kv_msb[3] = get_best15_from32(_mm256_extract_epi32(abs_ov_epi32, 3), &tmp_kv_shift[3]);
+-            tmp_kv_msb[4] = get_best15_from32(_mm256_extract_epi32(abs_ov_epi32, 4), &tmp_kv_shift[4]);
+-            tmp_kv_msb[5] = get_best15_from32(_mm256_extract_epi32(abs_ov_epi32, 5), &tmp_kv_shift[5]);
+-            tmp_kv_msb[6] = get_best15_from32(_mm256_extract_epi32(abs_ov_epi32, 6), &tmp_kv_shift[6]);
+-            tmp_kv_msb[7] = get_best15_from32(_mm256_extract_epi32(abs_ov_epi32, 7), &tmp_kv_shift[7]);
+-
+-            __m256i kv_shift_epi32 = _mm256_setr_epi32(tmp_kv_shift[0], tmp_kv_shift[1], tmp_kv_shift[2], tmp_kv_shift[3], tmp_kv_shift[4], tmp_kv_shift[5], tmp_kv_shift[6], tmp_kv_shift[7]);
+-            __m256i tmp_kv_msb_epi32 = _mm256_setr_epi32(tmp_kv_msb[0], tmp_kv_msb[1], tmp_kv_msb[2], tmp_kv_msb[3], tmp_kv_msb[4], tmp_kv_msb[5], tmp_kv_msb[6], tmp_kv_msb[7]);
++            __m256i kv_shift_epi32;
++            __m256i tmp_kv_msb_epi32 = get_best15_from32_256(abs_ov_epi32, &kv_shift_epi32);
++
+             __m256i mask_kv_msb_epi32 = _mm256_cmpgt_epi32(const_32768_epi32, abs_ov_epi32);
+             __m256i kv_msb_epi32 = blend(abs_ov_epi32, tmp_kv_msb_epi32, mask_kv_msb_epi32);
+             kv_shift_epi32 = blend(_mm256_setzero_si256(), kv_shift_epi32, mask_kv_msb_epi32);
+ 
+-            tmp_kd_msb[0] = get_best15_from32(_mm256_extract_epi32(abs_od_epi32, 0), &tmp_kd_shift[0]);
+-            tmp_kd_msb[1] = get_best15_from32(_mm256_extract_epi32(abs_od_epi32, 1), &tmp_kd_shift[1]);
+-            tmp_kd_msb[2] = get_best15_from32(_mm256_extract_epi32(abs_od_epi32, 2), &tmp_kd_shift[2]);
+-            tmp_kd_msb[3] = get_best15_from32(_mm256_extract_epi32(abs_od_epi32, 3), &tmp_kd_shift[3]);
+-            tmp_kd_msb[4] = get_best15_from32(_mm256_extract_epi32(abs_od_epi32, 4), &tmp_kd_shift[4]);
+-            tmp_kd_msb[5] = get_best15_from32(_mm256_extract_epi32(abs_od_epi32, 5), &tmp_kd_shift[5]);
+-            tmp_kd_msb[6] = get_best15_from32(_mm256_extract_epi32(abs_od_epi32, 6), &tmp_kd_shift[6]);
+-            tmp_kd_msb[7] = get_best15_from32(_mm256_extract_epi32(abs_od_epi32, 7), &tmp_kd_shift[7]);
+-
+-            __m256i kd_shift_epi32 = _mm256_setr_epi32(tmp_kd_shift[0], tmp_kd_shift[1], tmp_kd_shift[2], tmp_kd_shift[3], tmp_kd_shift[4], tmp_kd_shift[5], tmp_kd_shift[6], tmp_kd_shift[7]);
+-            __m256i tmp_kd_msb_epi32 = _mm256_setr_epi32(tmp_kd_msb[0], tmp_kd_msb[1], tmp_kd_msb[2], tmp_kd_msb[3], tmp_kd_msb[4], tmp_kd_msb[5], tmp_kd_msb[6], tmp_kd_msb[7]);
++            __m256i kd_shift_epi32;
++            __m256i tmp_kd_msb_epi32 = get_best15_from32_256(abs_od_epi32, &kd_shift_epi32);
++
+             __m256i mask_kd_msb_epi32 = _mm256_cmpgt_epi32(const_32768_epi32, abs_od_epi32);
+             __m256i kd_msb_epi32 = blend(abs_od_epi32, tmp_kd_msb_epi32, mask_kd_msb_epi32);
+             kd_shift_epi32 = blend(_mm256_setzero_si256(), kd_shift_epi32, mask_kd_msb_epi32);
+@@ -1620,69 +1641,46 @@
+              __m256i kd_hi_epi64 = blend(const_32768_epi64, tmp_kd_hi_epi64, _mm256_cmpgt_epi64( tmp_kd_hi_epi64, const_32768_epi64));
+              kd_hi_epi64 = blend(const_0_epi64, kd_hi_epi64, _mm256_cmpgt_epi64( const_0_epi64, tmp_kd_hi_epi64));
+ 
+-             // rst convert 64 -> 32 is done in scalar
+              // rst_h (int32_t)
+              __m256i rst_h_lo_epi64 = _mm256_srli_epi64(_mm256_add_epi64(_mm256_mul_epi32(kh_lo_epi64, oh_lo_epi64), const_16384_epi64), 15);
+              __m256i rst_h_hi_epi64 = _mm256_srli_epi64(_mm256_add_epi64(_mm256_mul_epi32(kh_hi_epi64, oh_hi_epi64), const_16384_epi64), 15);
+-             int64_t tmp_rst_h_c[8];
+-             _mm256_storeu_si256((__m256i*)(&(tmp_rst_h_c[0])),rst_h_lo_epi64);
+-             _mm256_storeu_si256((__m256i*)(&(tmp_rst_h_c[4])),rst_h_hi_epi64);
+-             __m256i rst_h_epi32 = _mm256_setr_epi32((int) tmp_rst_h_c[0], (int) tmp_rst_h_c[1], (int) tmp_rst_h_c[2], (int) tmp_rst_h_c[3],
+-                                                     (int) tmp_rst_h_c[4], (int) tmp_rst_h_c[5], (int) tmp_rst_h_c[6], (int) tmp_rst_h_c[7]);
++
++             __m256i rst_h_epi32 = merge_64_to_32(rst_h_lo_epi64, rst_h_hi_epi64);
++
+              // rst_v (int32_t)
+              __m256i rst_v_lo_epi64 = _mm256_srli_epi64(_mm256_add_epi64(_mm256_mul_epi32(kv_lo_epi64, ov_lo_epi64), const_16384_epi64), 15);
+              __m256i rst_v_hi_epi64 = _mm256_srli_epi64(_mm256_add_epi64(_mm256_mul_epi32(kv_hi_epi64, ov_hi_epi64), const_16384_epi64), 15);
+-             int64_t tmp_rst_v_c[8];
+-             _mm256_storeu_si256((__m256i*)(&(tmp_rst_v_c[0])),rst_v_lo_epi64);
+-             _mm256_storeu_si256((__m256i*)(&(tmp_rst_v_c[4])),rst_v_hi_epi64);
+-             __m256i rst_v_epi32 = _mm256_setr_epi32((int) tmp_rst_v_c[0], (int) tmp_rst_v_c[1], (int) tmp_rst_v_c[2], (int) tmp_rst_v_c[3],
+-                                                     (int) tmp_rst_v_c[4], (int) tmp_rst_v_c[5], (int) tmp_rst_v_c[6], (int) tmp_rst_v_c[7]);
++
++             __m256i rst_v_epi32 = merge_64_to_32(rst_v_lo_epi64, rst_v_hi_epi64);
++
+              // rst_d (int32_t)
+              __m256i rst_d_lo_epi64 = _mm256_srli_epi64(_mm256_add_epi64(_mm256_mul_epi32(kd_lo_epi64, od_lo_epi64), const_16384_epi64), 15);
+              __m256i rst_d_hi_epi64 = _mm256_srli_epi64(_mm256_add_epi64(_mm256_mul_epi32(kd_hi_epi64, od_hi_epi64), const_16384_epi64), 15);
+-             int64_t tmp_rst_d_c[8];
+-             _mm256_storeu_si256((__m256i*)(&(tmp_rst_d_c[0])),rst_d_lo_epi64);
+-             _mm256_storeu_si256((__m256i*)(&(tmp_rst_d_c[4])),rst_d_hi_epi64);
+-             __m256i rst_d_epi32 = _mm256_setr_epi32((int) tmp_rst_d_c[0], (int) tmp_rst_d_c[1], (int) tmp_rst_d_c[2], (int) tmp_rst_d_c[3],
+-                                                     (int) tmp_rst_d_c[4], (int) tmp_rst_d_c[5], (int) tmp_rst_d_c[6], (int) tmp_rst_d_c[7]);
++
++             __m256i rst_d_epi32 = merge_64_to_32(rst_d_lo_epi64, rst_d_hi_epi64);
+ 
+             __m256 inv_32768_f = _mm256_set1_ps((double)1/32768);
+             __m256 inv_64_f = _mm256_set1_ps((double)1/64);
+ 
+-            // kh convert 64 -> float needs to be done in scalar :(
+             // rst_h_f
+-            int64_t tmp_kh_c[8];
+-            _mm256_storeu_si256((__m256i*)(&(tmp_kh_c[0])),kh_lo_epi64);
+-            _mm256_storeu_si256((__m256i*)(&(tmp_kh_c[4])),kh_hi_epi64);
+-            __m256 kh_f = _mm256_cvtepi32_ps( _mm256_setr_epi32((int) tmp_kh_c[0], (int) tmp_kh_c[1], (int) tmp_kh_c[2], (int) tmp_kh_c[3],
+-                                                                (int) tmp_kh_c[4], (int) tmp_kh_c[5], (int) tmp_kh_c[6], (int) tmp_kh_c[7]));
++            __m256 kh_f = _mm256_cvtepi32_ps(merge_64_to_32(kh_lo_epi64, kh_hi_epi64));
+             __m256 rst_h_f = _mm256_mul_ps(_mm256_mul_ps(kh_f, inv_32768_f), _mm256_mul_ps(_mm256_cvtepi32_ps(oh_epi32), inv_64_f));
+             // rst_v_f
+-            int64_t tmp_kv_c[8];
+-            _mm256_storeu_si256((__m256i*)(&(tmp_kv_c[0])),kv_lo_epi64);
+-            _mm256_storeu_si256((__m256i*)(&(tmp_kv_c[4])),kv_hi_epi64);
+-            __m256 kv_f = _mm256_cvtepi32_ps( _mm256_setr_epi32((int) tmp_kv_c[0], (int) tmp_kv_c[1], (int) tmp_kv_c[2], (int) tmp_kv_c[3],
+-                                                                (int) tmp_kv_c[4], (int) tmp_kv_c[5], (int) tmp_kv_c[6], (int) tmp_kv_c[7]));
++            __m256 kv_f = _mm256_cvtepi32_ps(merge_64_to_32(kv_lo_epi64, kv_hi_epi64));
+             __m256 rst_v_f = _mm256_mul_ps(_mm256_mul_ps(kv_f, inv_32768_f), _mm256_mul_ps(_mm256_cvtepi32_ps(ov_epi32), inv_64_f));
+             // rst_d_f
+-            int64_t tmp_kd_c[8];
+-            _mm256_storeu_si256((__m256i*)(&(tmp_kd_c[0])),kd_lo_epi64);
+-            _mm256_storeu_si256((__m256i*)(&(tmp_kd_c[4])),kd_hi_epi64);
+-            __m256 kd_f = _mm256_cvtepi32_ps( _mm256_setr_epi32((int) tmp_kd_c[0], (int) tmp_kd_c[1], (int) tmp_kd_c[2], (int) tmp_kd_c[3],
+-                                                                (int) tmp_kd_c[4], (int) tmp_kd_c[5], (int) tmp_kd_c[6], (int) tmp_kd_c[7]));
++             __m256 kd_f = _mm256_cvtepi32_ps(merge_64_to_32(kd_lo_epi64, kd_hi_epi64));
+             __m256 rst_d_f = _mm256_mul_ps(_mm256_mul_ps(kd_f, inv_32768_f), _mm256_mul_ps(_mm256_cvtepi32_ps(od_epi32), inv_64_f));
+ 
+-	        __m256d adm_gain_d = _mm256_set1_pd(adm_enhn_gain_limit);
++            __m256d adm_gain_d = _mm256_set1_pd(adm_enhn_gain_limit);
+ 
+             // rst_h min/max as int64
+             __m256d rst_h_lo_gain_pd = _mm256_mul_pd(_mm256_cvtepi32_pd(_mm256_extracti128_si256(rst_h_epi32,0)), adm_gain_d);
+             __m256d rst_h_hi_gain_pd = _mm256_mul_pd(_mm256_cvtepi32_pd(_mm256_extracti128_si256(rst_h_epi32,1)), adm_gain_d);
+-            // convert double -> 64 done in scalar
+-            double tmp_rst_h_gain_c[8];
+-            _mm256_storeu_pd((double*)(&(tmp_rst_h_gain_c[0])),rst_h_lo_gain_pd);
+-            _mm256_storeu_pd((double*)(&(tmp_rst_h_gain_c[4])),rst_h_hi_gain_pd);
+-            __m256i rst_h_lo_gain_epi64 = _mm256_setr_epi64x((int64_t) tmp_rst_h_gain_c[0], (int64_t) tmp_rst_h_gain_c[1], (int64_t) tmp_rst_h_gain_c[2], (int64_t) tmp_rst_h_gain_c[3]);
+-            __m256i rst_h_hi_gain_epi64 = _mm256_setr_epi64x((int64_t) tmp_rst_h_gain_c[4], (int64_t) tmp_rst_h_gain_c[5], (int64_t) tmp_rst_h_gain_c[6], (int64_t) tmp_rst_h_gain_c[7]);
++
++            __m256i rst_h_lo_gain_epi64 = double_to_64(rst_h_lo_gain_pd);
++            __m256i rst_h_hi_gain_epi64 = double_to_64(rst_h_hi_gain_pd);
++
+             __m256i rst_h_min_lo_epi64 = blend( rst_h_lo_gain_epi64, th_lo_epi64, _mm256_cmpgt_epi64(th_lo_epi64, rst_h_lo_gain_epi64));
+             __m256i rst_h_min_hi_epi64 = blend( rst_h_hi_gain_epi64, th_hi_epi64, _mm256_cmpgt_epi64(th_hi_epi64, rst_h_hi_gain_epi64));
+             __m256i rst_h_max_lo_epi64 = blend( rst_h_lo_gain_epi64, th_lo_epi64, _mm256_cmpgt_epi64(rst_h_lo_gain_epi64, th_lo_epi64));
+@@ -1703,22 +1701,16 @@
+             rst_h_hi_epi64 = blend(rst_h_min_hi_epi64, rst_h_hi_epi64, mask_gt_h_hi_epi64);
+             rst_h_lo_epi64 = blend(rst_h_max_lo_epi64, rst_h_lo_epi64, mask_lt_h_lo_epi64);
+             rst_h_hi_epi64 = blend(rst_h_max_hi_epi64, rst_h_hi_epi64, mask_lt_h_hi_epi64);
+-            // convert 64 -> 32 is done in scalar
+-            int64_t tmp_rst_h_c2[8];
+-            _mm256_storeu_si256((__m256i*)(&(tmp_rst_h_c2[0])),rst_h_lo_epi64);
+-            _mm256_storeu_si256((__m256i*)(&(tmp_rst_h_c2[4])),rst_h_hi_epi64);
+-            rst_h_epi32 = _mm256_setr_epi32((int) tmp_rst_h_c2[0], (int) tmp_rst_h_c2[1], (int) tmp_rst_h_c2[2], (int) tmp_rst_h_c2[3],
+-                                            (int) tmp_rst_h_c2[4], (int) tmp_rst_h_c2[5], (int) tmp_rst_h_c2[6], (int) tmp_rst_h_c2[7]);
++
++            rst_h_epi32 = merge_64_to_32(rst_h_lo_epi64, rst_h_hi_epi64);
+ 
+             // rst_v min/max as int64
+             __m256d rst_v_lo_gain_pd = _mm256_mul_pd(_mm256_cvtepi32_pd(_mm256_extracti128_si256(rst_v_epi32,0)), adm_gain_d);
+             __m256d rst_v_hi_gain_pd = _mm256_mul_pd(_mm256_cvtepi32_pd(_mm256_extracti128_si256(rst_v_epi32,1)), adm_gain_d);
+-            // convert double -> 64 done in scalar
+-            double tmp_rst_v_gain_c[8];
+-            _mm256_storeu_pd((double*)(&(tmp_rst_v_gain_c[0])),rst_v_lo_gain_pd);
+-            _mm256_storeu_pd((double*)(&(tmp_rst_v_gain_c[4])),rst_v_hi_gain_pd);
+-            __m256i rst_v_lo_gain_epi64 = _mm256_setr_epi64x((int64_t) tmp_rst_v_gain_c[0], (int64_t) tmp_rst_v_gain_c[1], (int64_t) tmp_rst_v_gain_c[2], (int64_t) tmp_rst_v_gain_c[3]);
+-            __m256i rst_v_hi_gain_epi64 = _mm256_setr_epi64x((int64_t) tmp_rst_v_gain_c[4], (int64_t) tmp_rst_v_gain_c[5], (int64_t) tmp_rst_v_gain_c[6], (int64_t) tmp_rst_v_gain_c[7]);
++
++            __m256i rst_v_lo_gain_epi64 = double_to_64(rst_v_lo_gain_pd);
++            __m256i rst_v_hi_gain_epi64 = double_to_64(rst_v_hi_gain_pd);
++
+             __m256i rst_v_min_lo_epi64 = blend( rst_v_lo_gain_epi64, tv_lo_epi64, _mm256_cmpgt_epi64(tv_lo_epi64, rst_v_lo_gain_epi64));
+             __m256i rst_v_min_hi_epi64 = blend( rst_v_hi_gain_epi64, tv_hi_epi64, _mm256_cmpgt_epi64(tv_hi_epi64, rst_v_hi_gain_epi64));
+             __m256i rst_v_max_lo_epi64 = blend( rst_v_lo_gain_epi64, tv_lo_epi64, _mm256_cmpgt_epi64(rst_v_lo_gain_epi64, tv_lo_epi64));
+@@ -1740,22 +1732,16 @@
+             rst_v_hi_epi64 = blend(rst_v_min_hi_epi64, rst_v_hi_epi64, mask_gt_v_hi_epi64);
+             rst_v_lo_epi64 = blend(rst_v_max_lo_epi64, rst_v_lo_epi64, mask_lt_v_lo_epi64);
+             rst_v_hi_epi64 = blend(rst_v_max_hi_epi64, rst_v_hi_epi64, mask_lt_v_hi_epi64);
+-            // convert 64 -> 32 needs done in scalar
+-            int64_t tmp_rst_v_c2[8];
+-            _mm256_storeu_si256((__m256i*)(&(tmp_rst_v_c2[0])),rst_v_lo_epi64);
+-            _mm256_storeu_si256((__m256i*)(&(tmp_rst_v_c2[4])),rst_v_hi_epi64);
+-            rst_v_epi32 = _mm256_setr_epi32((int) tmp_rst_v_c2[0], (int) tmp_rst_v_c2[1], (int) tmp_rst_v_c2[2], (int) tmp_rst_v_c2[3],
+-                                            (int) tmp_rst_v_c2[4], (int) tmp_rst_v_c2[5], (int) tmp_rst_v_c2[6], (int) tmp_rst_v_c2[7]);
++
++            rst_v_epi32 = merge_64_to_32(rst_v_lo_epi64, rst_v_hi_epi64);
+ 
+             // rst_d min/max as int64
+             __m256d rst_d_lo_gain_pd = _mm256_mul_pd(_mm256_cvtepi32_pd(_mm256_extracti128_si256(rst_d_epi32,0)), adm_gain_d);
+             __m256d rst_d_hi_gain_pd = _mm256_mul_pd(_mm256_cvtepi32_pd(_mm256_extracti128_si256(rst_d_epi32,1)), adm_gain_d);
+-            // convert double -> 64 done in scalar
+-            double tmp_rst_d_gain_c[8];
+-            _mm256_storeu_pd((double*)(&(tmp_rst_d_gain_c[0])),rst_d_lo_gain_pd);
+-            _mm256_storeu_pd((double*)(&(tmp_rst_d_gain_c[4])),rst_d_hi_gain_pd);
+-            __m256i rst_d_lo_gain_epi64 = _mm256_setr_epi64x((int64_t) tmp_rst_d_gain_c[0], (int64_t) tmp_rst_d_gain_c[1], (int64_t) tmp_rst_d_gain_c[2], (int64_t) tmp_rst_d_gain_c[3]);
+-            __m256i rst_d_hi_gain_epi64 = _mm256_setr_epi64x((int64_t) tmp_rst_d_gain_c[4], (int64_t) tmp_rst_d_gain_c[5], (int64_t) tmp_rst_d_gain_c[6], (int64_t) tmp_rst_d_gain_c[7]);
++
++            __m256i rst_d_lo_gain_epi64 = double_to_64(rst_d_lo_gain_pd);
++            __m256i rst_d_hi_gain_epi64 = double_to_64(rst_d_hi_gain_pd);
++
+             __m256i rst_d_min_lo_epi64 = blend( rst_d_lo_gain_epi64, td_lo_epi64, _mm256_cmpgt_epi64(td_lo_epi64, rst_d_lo_gain_epi64));
+             __m256i rst_d_min_hi_epi64 = blend( rst_d_hi_gain_epi64, td_hi_epi64, _mm256_cmpgt_epi64(td_hi_epi64, rst_d_hi_gain_epi64));
+             __m256i rst_d_max_lo_epi64 = blend( rst_d_lo_gain_epi64, td_lo_epi64, _mm256_cmpgt_epi64(rst_d_lo_gain_epi64, td_lo_epi64));
+@@ -1777,12 +1763,8 @@
+             rst_d_hi_epi64 = blend(rst_d_min_hi_epi64, rst_d_hi_epi64, mask_gt_d_hi_epi64);
+             rst_d_lo_epi64 = blend(rst_d_max_lo_epi64, rst_d_lo_epi64, mask_lt_d_lo_epi64);
+             rst_d_hi_epi64 = blend(rst_d_max_hi_epi64, rst_d_hi_epi64, mask_lt_d_hi_epi64);
+-            // convert 64 -> 32 done in scalar
+-            int64_t tmp_rst_d_c2[8];
+-            _mm256_storeu_si256((__m256i*)(&(tmp_rst_d_c2[0])),rst_d_lo_epi64);
+-            _mm256_storeu_si256((__m256i*)(&(tmp_rst_d_c2[4])),rst_d_hi_epi64);
+-            rst_d_epi32 = _mm256_setr_epi32((int) tmp_rst_d_c2[0], (int) tmp_rst_d_c2[1], (int) tmp_rst_d_c2[2], (int) tmp_rst_d_c2[3],
+-                                            (int) tmp_rst_d_c2[4], (int) tmp_rst_d_c2[5], (int) tmp_rst_d_c2[6], (int) tmp_rst_d_c2[7]);
++
++            rst_d_epi32 = merge_64_to_32(rst_d_lo_epi64, rst_d_hi_epi64);
+ 
+             __m256i th_sub_rst_h_epi32 = _mm256_sub_epi32(th_epi32, rst_h_epi32);
+             __m256i tv_sub_rst_v_epi32 = _mm256_sub_epi32(tv_epi32, rst_v_epi32);
+diff --git a/libvmaf/src/feature/x86/adm_avx512.c b/libvmaf/src/feature/x86/adm_avx512.c
+--- a/libvmaf/src/feature/x86/adm_avx512.c
++++ b/libvmaf/src/feature/x86/adm_avx512.c
+@@ -172,7 +172,7 @@
+ 		sum += flt_ptr[src_stride]; \
+ 		sum += flt_ptr[src_stride + 1]; \
+ 		sum += flt_ptr[1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[0]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[0]) + 2048) >> 12);\
+ 		sum += flt_ptr[1]; \
+ 		sum += flt_ptr[src_stride + 1]; \
+ 		sum += flt_ptr[src_stride]; \
+@@ -193,7 +193,7 @@
+ 		sum += flt_ptr[src_stride + w - 1]; \
+ 		sum += flt_ptr[src_stride + w - 1]; \
+ 		sum += flt_ptr[w - 2]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]) + 2048) >> 12);\
+ 		sum += flt_ptr[w - 1]; \
+ 		sum += flt_ptr[src_stride + w - 2]; \
+ 		sum += flt_ptr[src_stride + w - 1]; \
+@@ -214,7 +214,7 @@
+ 		sum += flt_ptr[src_stride + j]; \
+ 		sum += flt_ptr[src_stride + j + 1]; \
+ 		sum += flt_ptr[j - 1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[j]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[j]) + 2048) >> 12);\
+ 		sum += flt_ptr[j + 1]; \
+ 		sum += flt_ptr[src_stride + j - 1]; \
+ 		sum += flt_ptr[src_stride + j]; \
+@@ -239,7 +239,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[0]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[0]) + 2048) >> 12);\
+ 		sum += flt_ptr[1]; \
+ 		sum += flt_ptr[1]; \
+ 		sum += flt_ptr[0]; \
+@@ -264,7 +264,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[w - 2]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]) + 2048) >> 12);\
+ 		sum += flt_ptr[w - 1]; \
+ 		sum += flt_ptr[w - 2]; \
+ 		sum += flt_ptr[w - 1]; \
+@@ -289,7 +289,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[j - 1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[j]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[j]) + 2048) >> 12);\
+ 		sum += flt_ptr[j + 1]; \
+ 		sum += flt_ptr[j - 1]; \
+ 		sum += flt_ptr[j]; \
+@@ -314,7 +314,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[j - 1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[j]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[j]) + 2048) >> 12);\
+ 		sum += flt_ptr[j + 1]; \
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+@@ -414,7 +414,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[1]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[0]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[0]) + 2048) >> 12);\
+ 		sum += flt_ptr[1]; \
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+@@ -441,7 +441,7 @@
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+ 		sum += flt_ptr[w - 2]; \
+-		sum += (int16_t)(((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]))+ 2048)>>12);\
++		sum += ((ONE_BY_15 * abs((int32_t) src_ptr[w - 1]) + 2048) >> 12);\
+ 		sum += flt_ptr[w - 1]; \
+ 		src_ptr += src_stride; \
+ 		flt_ptr += src_stride; \
+@@ -747,8 +747,11 @@
+ #define ADM_CM_ACCUM_ROUND(x, thr, shift_xsub, x_sq, add_shift_xsq, shift_xsq, val, \
+                            add_shift_xcub, shift_xcub, accum_inner) \
+ { \
+-    x = abs(x) - ((int32_t)(thr) << shift_xsub); \
+-    x = x < 0 ? 0 : x; \
++    const int64_t x_magnitude = x < 0 ? -(int64_t)x : (int64_t)x; \
++    const int64_t x_after_threshold = \
++        x_magnitude - (int64_t)thr * ((int64_t)1 << shift_xsub); \
++    x = x_after_threshold <= 0 ? 0 : \
++        x_after_threshold > INT32_MAX ? INT32_MAX : (int32_t)x_after_threshold; \
+     x_sq = (int32_t)((((int64_t)x * x) + add_shift_xsq) >> shift_xsq); \
+     val = (((int64_t)x_sq * x) + add_shift_xcub) >> shift_xcub; \
+     accum_inner += val; \
+@@ -757,8 +760,11 @@
+ #define ADM_CM_ACCUM_ROUND_avx512(x, thr, shift_xsub, x_sq, add_shift_xsq, shift_xsq, val, \
+                            add_shift_xcub, shift_xcub, accum_inner_lo, accum_inner_hi) \
+ { \
++    const __mmask16 threshold_fits = _mm512_cmple_epi32_mask( \
++        thr, _mm512_set1_epi32(INT32_MAX >> shift_xsub)); \
+     x = _mm512_sub_epi32(_mm512_abs_epi32(x), _mm512_slli_epi32(thr, shift_xsub)); \
+     x = _mm512_max_epi32(x, _mm512_setzero_si512()); \
++    x = _mm512_maskz_mov_epi32(threshold_fits, x); \
+     __m512i x_sq_lo = _mm512_srai_epi64(_mm512_add_epi64(_mm512_mul_epi32(x, x), _mm512_set1_epi64(add_shift_xsq)), shift_xsq); \
+     __m512i x_sq_hi = _mm512_srai_epi64(_mm512_add_epi64(_mm512_mul_epi32(_mm512_srli_epi64(x, 32), _mm512_srli_epi64(x, 32)), _mm512_set1_epi64(add_shift_xsq)), shift_xsq); \
+     x_sq_lo = _mm512_srai_epi64(_mm512_add_epi64(_mm512_mul_epi32(x_sq_lo, x), _mm512_set1_epi64(add_shift_xcub)), shift_xcub); \
+diff --git a/libvmaf/test/meson.build b/libvmaf/test/meson.build
+--- a/libvmaf/test/meson.build
++++ b/libvmaf/test/meson.build
+@@ -122,6 +122,21 @@
+     include_directories : [libvmaf_inc, test_inc, include_directories('../src/'), include_directories('../tools/')],
+     link_with : get_option('default_library') == 'both' ? libvmaf.get_static_lib() : libvmaf,
+     c_args : [compat_cflags],
++)
++
++test_adm_cm_large_coeffs = executable('test_adm_cm_large_coeffs',
++    ['test.c', 'test_adm_cm_large_coeffs.c', '../src/mem.c', '../src/picture.c', '../src/ref.c',
++     '../src/dict.c', '../src/opt.c', '../src/log.c', '../src/predict.c',
++     '../src/metadata_handler.c'],
++    include_directories : [libvmaf_inc, test_inc, include_directories('../src/')],
++    dependencies : [math_lib, stdatomic_dependency, thread_lib, cuda_dependency],
++    objects : [
++      common_cuda_objects,
++      platform_specific_cpu_objects,
++      libvmaf_feature_static_lib.extract_all_objects(recursive: true),
++      libvmaf_cpu_static_lib.extract_all_objects(recursive: true),
++      libsvm_static_lib.extract_all_objects(recursive: true),
++    ]
+ )
+ 
+ test_psnr = executable('test_psnr',
+@@ -220,6 +235,7 @@
+ test('test_cambi', test_cambi)
+ test('test_luminance_tools', test_luminance_tools)
+ test('test_cli_parse', test_cli_parse)
++test('test_adm_cm_large_coeffs', test_adm_cm_large_coeffs)
+ test('test_psnr', test_psnr)
+ test('test_framesync', test_framesync)
+ test('test_propagate_metadata', test_propagate_metadata)
+diff --git a/libvmaf/test/test_adm_cm_large_coeffs.c b/libvmaf/test/test_adm_cm_large_coeffs.c
+new file mode 100644
+--- /dev/null
++++ b/libvmaf/test/test_adm_cm_large_coeffs.c
+@@ -0,0 +1,127 @@
++/**
++ *
++ *  Copyright 2026 Lusoris
++ *
++ *     Licensed under the BSD+Patent License (the "License");
++ *     you may not use this file except in compliance with the License.
++ *     You may obtain a copy of the License at
++ *
++ *         https://opensource.org/licenses/BSDplusPatent
++ *
++ *     Unless required by applicable law or agreed to in writing, software
++ *     distributed under the License is distributed on an "AS IS" BASIS,
++ *     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ *     See the License for the specific language governing permissions and
++ *     limitations under the License.
++ *
++ */
++
++#include <math.h>
++#include <stdint.h>
++
++#include "test.h"
++#include "config.h"
++#include "cpu.h"
++#include "feature/integer_adm.h"
++
++#if ARCH_X86
++#include "feature/x86/adm_avx2.h"
++#if HAVE_AVX512
++#include "feature/x86/adm_avx512.h"
++#endif
++#endif
++
++typedef float (*adm_cm_fn)(AdmBuffer *buf, int w, int h, int src_stride,
++                           int csf_a_stride, double adm_norm_view_dist,
++                           int adm_ref_display_height, int adm_csf_mode,
++                           double adm_csf_scale, double adm_csf_diag_scale,
++                           double adm_noise_weight, bool measure_aim);
++
++static uint32_t lcg_state;
++
++/* Magnitudes of 12000 to 22916 with a random sign. 22916 bounds the magnitude
++ * of a scale 0 dwt2 coefficient, (54822 * 27395 + 32768) >> 16. After adm_csf()
++ * most of these coefficients exceed 15360, the point from which the centre tap
++ * of the contrast masking threshold no longer fits int16_t. The accumulated
++ * threshold can also exceed INT32_MAX after it is rescaled for subtraction;
++ * that must clamp the residual to zero instead of overflowing the shift. */
++static int16_t lcg_sample(void)
++{
++    lcg_state = lcg_state * 1664525u + 1013904223u;
++    const int16_t magnitude = (int16_t)(12000 + (lcg_state >> 8) % 10917u);
++    return (lcg_state & 0x80u) ? magnitude : (int16_t)-magnitude;
++}
++
++static void fill_band(adm_dwt_band_t *band, int rows, int stride)
++{
++    for (int i = 0; i < rows * stride; i++) {
++        band->band_h[i] = lcg_sample();
++        band->band_v[i] = lcg_sample();
++        band->band_d[i] = lcg_sample();
++    }
++}
++
++static float run_adm_cm(adm_cm_fn fn, int w, int h)
++{
++    AdmBuffer buf;
++    if (adm_buffer_alloc(&buf, w, h)) return NAN;
++
++    const int stride = (int)(buf.ind_size_x >> 2);
++    const int w_half = (w + 1) / 2, h_half = (h + 1) / 2;
++
++    lcg_state = (uint32_t)(w * 4099 + h);
++    fill_band(&buf.decouple_r, h_half, stride);
++    fill_band(&buf.decouple_a, h_half, stride);
++    /* csf_a and csf_f as the extractor produces them */
++    adm_csf(&buf, w_half, h_half, stride, DEFAULT_ADM_NORM_VIEW_DIST,
++            DEFAULT_ADM_REF_DISPLAY_HEIGHT, DEFAULT_ADM_CSF_MODE,
++            DEFAULT_ADM_CSF_SCALE, DEFAULT_ADM_CSF_DIAG_SCALE, false);
++
++    const float score =
++        fn(&buf, w_half, h_half, stride, stride, DEFAULT_ADM_NORM_VIEW_DIST,
++           DEFAULT_ADM_REF_DISPLAY_HEIGHT, DEFAULT_ADM_CSF_MODE,
++           DEFAULT_ADM_CSF_SCALE, DEFAULT_ADM_CSF_DIAG_SCALE,
++           DEFAULT_ADM_NOISE_WEIGHT, false);
++
++    adm_buffer_free(&buf);
++    return score;
++}
++
++static int matches_scalar(adm_cm_fn fn, const char *name)
++{
++    static const int widths[] = { 64, 97, 130, 176 };
++
++    for (unsigned i = 0; i < sizeof(widths) / sizeof(widths[0]); i++) {
++        const int w = widths[i], h = 72;
++        const float expected = run_adm_cm(adm_cm, w, h);
++        const float actual = run_adm_cm(fn, w, h);
++        if (!(fabsf(expected - actual) <= 1e-6f * fabsf(expected))) {
++            fprintf(stderr, "%s, frame width %d: %.9g, scalar %.9g\n",
++                    name, w, actual, expected);
++            return 0;
++        }
++    }
++    return 1;
++}
++
++static char *test_adm_cm_large_coeffs_match_scalar()
++{
++#if ARCH_X86
++    const unsigned flags = vmaf_get_cpu_flags();
++
++    if (flags & VMAF_X86_CPU_FLAG_AVX2)
++        mu_assert("adm_cm_avx2 differs from adm_cm", matches_scalar(adm_cm_avx2, "adm_cm_avx2"));
++#if HAVE_AVX512
++    if (flags & VMAF_X86_CPU_FLAG_AVX512)
++        mu_assert("adm_cm_avx512 differs from adm_cm", matches_scalar(adm_cm_avx512, "adm_cm_avx512"));
++#endif
++#endif
++    return NULL;
++}
++
++char *run_tests()
++{
++    vmaf_init_cpu();
++    mu_run_test(test_adm_cm_large_coeffs_match_scalar);
++    return NULL;
++}

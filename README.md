@@ -1,26 +1,33 @@
 # VMAF - Video Multi-Method Assessment Fusion
 
-> **Experimental Intel N100 test (English)** — This repository includes an
-> isolated FFmpeg/libvmaf pipeline experiment; it is not an upstream VMAF
-> release or a production installation. On the tested 1920×1080, 8-bit
-> H.264/HEVC pair, the fastest configuration reduced end-to-end comparison
-> time by **30.7%** versus the installed FFmpeg: **8.354 s → 5.786 s** for
-> 300 frames (three-run median, **1.44× throughput**). Reported VMAF metrics
-> matched at JSON output precision. The changes combine VAAPI decode/direct
-> mapping, native 8-bit input, SpEED row skipping, and AVFrame input import;
-> VMAF feature computation stays on the CPU. See the
-> [experiment README](tools/experimental/n100/README.md) and
-> [validation summary](resource/doc/intel_n100_experimental_binary_validation.ko.md).
+> **Experimental Intel N100 v2 test (English)** — This isolated FFmpeg/libvmaf
+> experiment is not an upstream release or a production installation. With each
+> process pinned to two CPU cores, VMAF using two threads, and one decoder
+> thread per input, the v2 build reduced end-to-end comparison time versus the
+> installed FFmpeg by **33.67%** and **33.44%** on two 1920×1080, 8-bit inputs:
+> **14.179 → 9.405 s** and **13.977 → 9.303 s** per 300 frames (five-run
+> medians). This is about **1.51× throughput**. Full-length runs were
+> **5.45%** and **5.94%** faster than the previous optimized build (one run
+> each). Recorded VMAF metrics matched at JSON output precision. v2 combines
+> VAAPI decode/direct mapping, native 8-bit input, SpEED row skipping,
+> AVFrame input import, and upstream ADM correctness/AVX2 changes; VMAF
+> feature computation stays on the CPU. See the [v2 test report](resource/doc/intel_n100_vmaf_v2_test_list.ko.md),
+> [combined ADM patch](tools/experimental/n100/v2-adm-combined.patch), and
+> [pipeline experiment](tools/experimental/n100/README.md).
 >
-> **Intel N100 테스트 (한국어)** — 이 저장소에는 격리된 FFmpeg/libvmaf 파이프라인
-> 실험이 포함돼 있다. upstream VMAF 릴리스나 운영 설치본의 성능 주장이 아니다.
-> 시험한 1920×1080 8-bit H.264/HEVC 영상에서 300프레임 비교 시간의 3회
-> 중앙값은 설치 FFmpeg **8.354초 → 실험본 5.786초**로 **30.7% 단축**됐고,
-> 처리율은 **1.44배**였다. 기록된 VMAF 값은 JSON 출력 정밀도에서 일치했다.
-> 변경점은 VAAPI 디코딩·직접 매핑, planar 8-bit 입력, SpEED 행 계산 생략,
-> AVFrame 입력 복사 생략이며 VMAF feature 계산은 CPU에서 수행한다. 범위와
-> 제한은 [실험 README](tools/experimental/n100/README.md)와
-> [검증 요약](resource/doc/intel_n100_experimental_binary_validation.ko.md)에 있다.
+> **Intel N100 v2 테스트 (한국어)** — 격리된 FFmpeg/libvmaf 실험이며 upstream
+> 릴리스나 운영 설치본의 성능 주장이 아니다. 프로세스를 CPU 두 개에 고정하고
+> VMAF 2스레드·입력별 디코더 1스레드로 맞춘 뒤, 설치 FFmpeg와 직접 비교했다.
+> 1920×1080 8-bit 입력 두 종류의 300프레임 비교 시간은 5회 중앙값으로
+> **14.179→9.405초(33.67% 단축)**, **13.977→9.303초(33.44% 단축)**였다.
+> 처리율은 약 **1.51배**다. 전편에서는 이전 최적화 빌드 대비 각각
+> **5.45%**, **5.94%** 빨랐으며 각 1회 측정이다. 기록된 VMAF 값은 JSON
+> 출력 정밀도에서 일치했다. v2는 VAAPI 디코딩·직접 매핑, 8-bit 입력,
+> SpEED 행 계산 생략, AVFrame 복사 생략, ADM 정확도·AVX2 변경을 결합했다.
+> feature 계산은 CPU에서 수행한다. 자세한 조건과 제한은
+> [v2 테스트 보고서](resource/doc/intel_n100_vmaf_v2_test_list.ko.md),
+> [ADM 결합 패치](tools/experimental/n100/v2-adm-combined.patch),
+> [파이프라인 실험](tools/experimental/n100/README.md)에 있다.
 
 [![libvmaf](https://github.com/Netflix/vmaf/actions/workflows/libvmaf.yml/badge.svg)](https://github.com/Netflix/vmaf/actions/workflows/libvmaf.yml)
 [![Windows](https://github.com/Netflix/vmaf/actions/workflows/windows.yml/badge.svg)](https://github.com/Netflix/vmaf/actions/workflows/windows.yml)

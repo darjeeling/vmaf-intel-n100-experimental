@@ -1,5 +1,27 @@
 # VMAF - Video Multi-Method Assessment Fusion
 
+> **Experimental Intel N100 test (English)** — This repository includes an
+> isolated FFmpeg/libvmaf pipeline experiment; it is not an upstream VMAF
+> release or a production installation. On the tested 1920×1080, 8-bit
+> H.264/HEVC pair, the fastest configuration reduced end-to-end comparison
+> time by **30.7%** versus the installed FFmpeg: **8.354 s → 5.786 s** for
+> 300 frames (three-run median, **1.44× throughput**). Reported VMAF metrics
+> matched at JSON output precision. The changes combine VAAPI decode/direct
+> mapping, native 8-bit input, SpEED row skipping, and AVFrame input import;
+> VMAF feature computation stays on the CPU. See the
+> [experiment README](tools/experimental/n100/README.md) and
+> [validation summary](resource/doc/intel_n100_experimental_binary_validation.ko.md).
+>
+> **Intel N100 테스트 (한국어)** — 이 저장소에는 격리된 FFmpeg/libvmaf 파이프라인
+> 실험이 포함돼 있다. upstream VMAF 릴리스나 운영 설치본의 성능 주장이 아니다.
+> 시험한 1920×1080 8-bit H.264/HEVC 영상에서 300프레임 비교 시간의 3회
+> 중앙값은 설치 FFmpeg **8.354초 → 실험본 5.786초**로 **30.7% 단축**됐고,
+> 처리율은 **1.44배**였다. 기록된 VMAF 값은 JSON 출력 정밀도에서 일치했다.
+> 변경점은 VAAPI 디코딩·직접 매핑, planar 8-bit 입력, SpEED 행 계산 생략,
+> AVFrame 입력 복사 생략이며 VMAF feature 계산은 CPU에서 수행한다. 범위와
+> 제한은 [실험 README](tools/experimental/n100/README.md)와
+> [검증 요약](resource/doc/intel_n100_experimental_binary_validation.ko.md)에 있다.
+
 [![libvmaf](https://github.com/Netflix/vmaf/actions/workflows/libvmaf.yml/badge.svg)](https://github.com/Netflix/vmaf/actions/workflows/libvmaf.yml)
 [![Windows](https://github.com/Netflix/vmaf/actions/workflows/windows.yml/badge.svg)](https://github.com/Netflix/vmaf/actions/workflows/windows.yml)
 [![ffmpeg](https://github.com/Netflix/vmaf/actions/workflows/ffmpeg.yml/badge.svg)](https://github.com/Netflix/vmaf/actions/workflows/ffmpeg.yml)

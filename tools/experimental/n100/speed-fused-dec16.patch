@@ -1,0 +1,141 @@
+--- a/libvmaf/src/feature/speed.c
++++ b/libvmaf/src/feature/speed.c
+@@ -21,6 +21,7 @@
+ #include <math.h>
+ #include <stdbool.h>
+ #include <stddef.h>
++#include <stdlib.h>
+ #include <string.h>
+ 
+ #include "dict.h"
+@@ -33,6 +34,7 @@
+ #include "picture.h"
+ #include "picture_copy.h"
+ #include "vif_tools.h"
++#include "common/convolution.h"
+ #include "speed.h"
+ 
+ #include "cpu.h"
+@@ -87,6 +89,7 @@
+     int *bilinear_x1a;
+     int *bilinear_x2a;
+     float *bilinear_dxa;
++    bool fused_dec16;
+ } SpeedBuffers;
+ 
+ // Everything that is passed in as a feature option and is needed for
+@@ -983,12 +986,21 @@
+     float filter_antialias[128];
+     speed_get_antialias_filter(filter_antialias, NUM_SCALES,
+                                opt->speed_kernelscale);
+-    vif_filter1d_s(filter_antialias, frame_buffer, curr_scale, tmpbuf,
+-                   dim.scaled_width, dim.scaled_height, float_stride,
+-                   float_stride, filter_width_antialias);
+-
+-    vif_dec16_s(curr_scale, frame_buffer, dim.scaled_width, dim.scaled_height,
+-                float_stride, float_stride);
++#if ARCH_X86
++    if (bufs->fused_dec16) {
++        convolution_f32_avx_s_dec16(filter_antialias, frame_buffer, frame_buffer,
++            curr_scale, tmpbuf, dim.scaled_width, dim.scaled_height,
++            stride_px, stride_px);
++    } else
++#endif
++    {
++        vif_filter1d_s(filter_antialias, frame_buffer, curr_scale, tmpbuf,
++                       dim.scaled_width, dim.scaled_height, float_stride,
++                       float_stride, filter_width_antialias);
++
++        vif_dec16_s(curr_scale, frame_buffer, dim.scaled_width, dim.scaled_height,
++                    float_stride, float_stride);
++    }
+ 
+     size_t downscaled_w = dim.scaled_width >> NUM_SCALES;
+     size_t downscaled_h = dim.scaled_height >> NUM_SCALES;
+@@ -1073,6 +1085,15 @@
+     if (vif_get_scaling_method(opt->speed_prescale_method, &scaling_method)) {
+         return -EINVAL;
+     }
++
++    /* Opt in only for this isolated experiment and its supported settings. */
++    s->buffers.fused_dec16 = false;
++#if ARCH_X86
++    const char *fused_dec16 = getenv("VMAF_SPEED_FUSED_DEC16");
++    s->buffers.fused_dec16 = fused_dec16 && !strcmp(fused_dec16, "1") &&
++        opt->speed_prescale == 1.0 && opt->speed_kernelscale == 1.0 &&
++        (vmaf_get_cpu_flags() & VMAF_X86_CPU_FLAG_AVX2);
++#endif
+ 
+     s->float_stride = ALIGN_CEIL(dim->alloc_width * sizeof(float));
+     size_t stride_px = s->float_stride / sizeof(float);
+--- a/libvmaf/src/feature/common/convolution.h
++++ b/libvmaf/src/feature/common/convolution.h
+@@ -42,6 +42,14 @@
+ 
+ void convolution_f32_avx_s(const float *filter, int filter_width, const float *src, float *dst, float *tmp, int width, int height, int src_stride, int dst_stride);
+ 
++/* Experimental exact-row selection used only by SpEED at decimation 16.
++ * row and tmp each hold at least ceil(width / 8) * 8 floats.  src == dst
++ * is supported for a 9-tap filter; other aliases are not supported. */
++void convolution_f32_avx_s_dec16(const float *filter, const float *src,
++                               float *dst, float *row, float *tmp,
++                               int width, int height, int src_stride,
++                               int dst_stride);
++
+ void convolution_f32_avx_sq_s(const float *filter, int filter_width, const float *src, float *dst, float *tmp, int width, int height, int src_stride, int dst_stride);
+ 
+ void convolution_f32_avx_xy_s(const float *filter, int filter_width, const float *src1, const float *src2, float *dst, float *tmp, int width, int height, int src1_stride, int src2_stride, int dst_stride);
+--- a/libvmaf/src/feature/common/convolution_avx.c
++++ b/libvmaf/src/feature/common/convolution_avx.c
+@@ -164,6 +164,51 @@
+     }
+ }
+ 
++/* Keep the existing 9-tap AVX/FMA instructions and boundary arithmetic, but
++ * compute only rows that vif_dec16_s would retain.  Horizontal scanlines
++ * still compute all columns to preserve the existing implementation exactly.
++ * Future selected source rows start at 16 * (out_y + 1) - 4, so compact
++ * in-place output row out_y cannot overwrite an input needed by a later row.
++ */
++void convolution_f32_avx_s_dec16(const float *filter, const float *src,
++                               float *dst, float *row, float *tmp,
++                               int width, int height, int src_stride,
++                               int dst_stride)
++{
++    const int filter_width = 9;
++    const int radius = filter_width / 2;
++    const int width_floor_step = vmaf_floorn(width, AVX_STEP);
++    const int tmp_stride = vmaf_ceiln(width, AVX_STEP);
++    const int j_vec_end = vmaf_floorn(width - radius, AVX_STEP);
++
++    for (int out_y = 0; out_y < height / 16; out_y++) {
++        const int y = out_y * 16;
++        if (y < radius || y >= height - radius) {
++            for (int x = 0; x < width; x++)
++                tmp[x] = convolution_edge_s(false, filter, filter_width,
++                    src, width, height, src_stride, y, x);
++        } else {
++            convolution_f32_avx_s_1d_v_scanline(filter, filter_width,
++                src + y * src_stride, tmp, src_stride, width_floor_step);
++            for (int x = width_floor_step; x < width; x++)
++                tmp[x] = convolution_edge_s(false, filter, filter_width,
++                    src, width, height, src_stride, y, x);
++        }
++
++        for (int x = 0; x < radius; x++)
++            row[x] = convolution_edge_s(true, filter, filter_width,
++                tmp, width, 1, tmp_stride, 0, x);
++        convolution_f32_avx_s_1d_h_scanline(filter, filter_width,
++            tmp, row, j_vec_end);
++        for (int x = j_vec_end; x < width; x++)
++            row[x] = convolution_edge_s(true, filter, filter_width,
++                tmp, width, 1, tmp_stride, 0, x);
++
++        for (int out_x = 0; out_x < width / 16; out_x++)
++            dst[out_y * dst_stride + out_x] = row[out_x * 16];
++    }
++}
++
+ void convolution_f32_avx_sq_s(const float * RESTRICT filter, int filter_width, const float * RESTRICT src, float * RESTRICT dst, float * RESTRICT tmp, int width, int height, int src_stride, int dst_stride) {
+     int radius = filter_width / 2;
+     int width_floor_step = vmaf_floorn(width, AVX_STEP);

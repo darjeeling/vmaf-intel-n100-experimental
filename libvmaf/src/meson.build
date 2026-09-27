@@ -32,6 +32,11 @@ endif
 
 is_asm_enabled = get_option('enable_asm') == true
 is_cuda_enabled = get_option('enable_cuda') == true
+is_intel_opencl_enabled = get_option('enable_intel_opencl')
+cdata.set10('HAVE_INTEL_OPENCL', is_intel_opencl_enabled)
+if is_intel_opencl_enabled and host_machine.system() != 'linux'
+    error('The experimental Intel OpenCL backend currently supports Linux only')
+endif
 is_avx512_enabled = get_option('enable_avx512') == true
 is_nvtx_enabled = get_option('enable_nvtx') == true
 
@@ -544,11 +549,17 @@ if is_cuda_enabled
     ]
 endif
 
+intel_opencl_dependencies = []
+if is_intel_opencl_enabled
+    libvmaf_feature_sources += [feature_src_dir + 'intel_opencl.c']
+    intel_opencl_dependencies += [cc.find_library('dl', required: true)]
+endif
+
 libvmaf_feature_static_lib = static_library(
     'libvmaf_feature',
     libvmaf_feature_sources,
     include_directories : [libvmaf_include, vmaf_include, cuda_dir],
-    dependencies: [stdatomic_dependency, cuda_dependency],
+    dependencies: [stdatomic_dependency, cuda_dependency, intel_opencl_dependencies],
     objects: common_cuda_objects
 )
 
@@ -608,6 +619,7 @@ libvmaf = library(
       math_lib,
       stdatomic_dependency,
       cuda_dependency,
+      intel_opencl_dependencies,
 	  rev_dep
     ],
     objects : [

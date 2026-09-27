@@ -1,0 +1,104 @@
+--- a/libavfilter/vf_libvmaf.c
++++ b/libavfilter/vf_libvmaf.c
+@@ -61,6 +61,8 @@
+     unsigned model_cnt;
+     unsigned frame_cnt;
+     unsigned bpc;
++    int use_picture_pool;
++    int picture_pool_initialized;
+ #if CONFIG_LIBVMAF_CUDA_FILTER
+     VmafCudaState *cu_state;
+ #endif
+@@ -77,6 +79,7 @@
+     {"n_subsample", "Set interval for frame subsampling used when computing vmaf.",     OFFSET(n_subsample), AV_OPT_TYPE_INT, {.i64=1}, 1, UINT_MAX, FLAGS},
+     {"model",  "Set the model to be used for computing vmaf.",                          OFFSET(model_cfg), AV_OPT_TYPE_STRING, {.str="version=vmaf_v0.6.1"}, 0, 1, FLAGS},
+     {"feature",  "Set the feature to be used for computing vmaf.",                      OFFSET(feature_cfg), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 1, FLAGS},
++    {"picture_pool", "Reuse libvmaf input picture buffers (experimental).", OFFSET(use_picture_pool), AV_OPT_TYPE_BOOL, {.i64=0}, 0, 1, FLAGS},
+     { NULL }
+ };
+ 
+@@ -105,13 +108,23 @@
+     }
+ }
+ 
+-static int copy_picture_data(AVFrame *src, VmafPicture *dst, unsigned bpc)
+-{
+-    const int bytes_per_value = bpc > 8 ? 2 : 1;
+-    int err = vmaf_picture_alloc(dst, pix_fmt_map(src->format), bpc,
++static int copy_picture_data(LIBVMAFContext *s, AVFrame *src, VmafPicture *dst)
++{
++    const int bytes_per_value = s->bpc > 8 ? 2 : 1;
++    int err;
++
++    if (s->use_picture_pool)
++        err = vmaf_fetch_preallocated_picture(s->vmaf, dst);
++    else
++        err = vmaf_picture_alloc(dst, pix_fmt_map(src->format), s->bpc,
+                                  src->width, src->height);
+     if (err)
+-        return AVERROR(ENOMEM);
++        return err;
++    if (dst->pix_fmt != pix_fmt_map(src->format) || dst->bpc != s->bpc ||
++        dst->w[0] != src->width || dst->h[0] != src->height) {
++        vmaf_picture_unref(dst);
++        return AVERROR(EINVAL);
++    }
+ 
+     for (unsigned i = 0; i < 3; i++) {
+         uint8_t *src_data = src->data[i];
+@@ -147,22 +160,47 @@
+                av_color_range_name(ref->color_range));
+     }
+ 
+-    err = copy_picture_data(ref, &pic_ref, s->bpc);
++    if (s->use_picture_pool && !s->picture_pool_initialized) {
++        VmafPictureConfiguration cfg = {
++            .pic_params = {
++                .w = ref->width,
++                .h = ref->height,
++                .bpc = s->bpc,
++                .pix_fmt = pix_fmt_map(ref->format),
++            },
++            /* Match the libvmaf CLI: queued frame pairs plus retained refs. */
++            .pic_cnt = s->n_threads > 0 ? (s->n_threads + 1) * 2 + 1 : 4,
++        };
++        err = vmaf_preallocate_pictures(s->vmaf, cfg);
++        if (err) {
++            av_log(ctx, AV_LOG_ERROR, "problem initializing libvmaf picture pool.\n");
++            return err;
++        }
++        s->picture_pool_initialized = 1;
++    }
++
++    err = copy_picture_data(s, ref, &pic_ref);
+     if (err) {
+-        av_log(ctx, AV_LOG_ERROR, "problem during vmaf_picture_alloc.\n");
+-        return AVERROR(ENOMEM);
+-    }
+-
+-    err = copy_picture_data(dist, &pic_dist, s->bpc);
++        av_log(ctx, AV_LOG_ERROR, "problem acquiring reference VmafPicture.\n");
++        return err;
++    }
++
++    err = copy_picture_data(s, dist, &pic_dist);
+     if (err) {
+-        av_log(ctx, AV_LOG_ERROR, "problem during vmaf_picture_alloc.\n");
++        av_log(ctx, AV_LOG_ERROR, "problem acquiring distorted VmafPicture.\n");
+         vmaf_picture_unref(&pic_ref);
+-        return AVERROR(ENOMEM);
++        return err;
+     }
+ 
+     err = vmaf_read_pictures(s->vmaf, &pic_ref, &pic_dist, s->frame_cnt++);
+     if (err) {
+         av_log(ctx, AV_LOG_ERROR, "problem during vmaf_read_pictures.\n");
++        /* CPU libvmaf clears pictures when consuming them. Release any
++         * unconsumed caller references before the pool waits during close. */
++        if (pic_ref.ref)
++            vmaf_picture_unref(&pic_ref);
++        if (pic_dist.ref)
++            vmaf_picture_unref(&pic_dist);
+         return AVERROR(EINVAL);
+     }
+ 

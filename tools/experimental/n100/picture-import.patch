@@ -1,0 +1,183 @@
+--- a/libvmaf/include/libvmaf/picture.h
++++ b/libvmaf/include/libvmaf/picture.h
+@@ -50,6 +50,30 @@
+ 
+ int vmaf_picture_unref(VmafPicture *pic);
+ 
++/* Experimental host-picture import; not a stable upstream ABI.
++ * Input is planar YUV420P, 8 or 10 bits, with positive aligned strides.
++ * data_size[i] is the accessible allocation size starting at data[i],
++ * including complete padded rows and at least 64 trailing readable bytes.
++ * All data pointers and strides must be aligned to 32 bytes. Dimensions
++ * must be even. Caller must keep pixel data unchanged until release(cookie).
++ * On success, release runs exactly once on the last picture unref, possibly
++ * from a worker thread. On failure, ownership stays with the caller, release
++ * is not called, and *pic is unchanged. Do not overwrite a live picture.
++ * This validates storage, not arbitrary feature-extractor compatibility.
++ */
++typedef struct VmafPictureImportConfiguration {
++    enum VmafPixelFormat pix_fmt;
++    unsigned bpc, w, h;
++    void *data[3];
++    ptrdiff_t stride[3];
++    size_t data_size[3];
++    void (*release)(void *cookie);
++    void *cookie;
++} VmafPictureImportConfiguration;
++
++int vmaf_picture_import(VmafPicture *pic,
++                        const VmafPictureImportConfiguration *cfg);
++
+ #ifdef __cplusplus
+ }
+ #endif
+--- a/libvmaf/src/picture.h
++++ b/libvmaf/src/picture.h
+@@ -33,6 +33,7 @@
+ 
+ typedef struct VmafPicturePrivate {
+     void *cookie;
++    void (*release_import)(void *cookie);
+     int (*release_picture)(VmafPicture *pic, void *cookie);
+ #ifdef HAVE_CUDA
+     struct {
+--- a/libvmaf/src/picture.c
++++ b/libvmaf/src/picture.c
+@@ -17,6 +17,7 @@
+  */
+ 
+ #include <errno.h>
++#include <limits.h>
+ #include <stdint.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -120,6 +121,60 @@
+     return 0;
+ }
+ 
++static int release_imported_picture(VmafPicture *pic, void *cookie)
++{
++    VmafPicturePrivate *priv = pic->priv;
++    priv->release_import(cookie);
++    return 0;
++}
++
++int vmaf_picture_import(VmafPicture *pic,
++                        const VmafPictureImportConfiguration *cfg)
++{
++    VmafPicture imported = { 0 };
++    if (!pic || !cfg || !cfg->release ||
++        cfg->pix_fmt != VMAF_PIX_FMT_YUV420P ||
++        (cfg->bpc != 8 && cfg->bpc != 10) ||
++        cfg->w < 2 || cfg->h < 2 || (cfg->w & 1) || (cfg->h & 1) ||
++        cfg->w > INT_MAX || cfg->h > INT_MAX)
++        return -EINVAL;
++
++    const unsigned bytes = cfg->bpc > 8 ? 2 : 1;
++    imported.pix_fmt = cfg->pix_fmt;
++    imported.bpc = cfg->bpc;
++    for (unsigned i = 0; i < 3; i++) {
++        const unsigned w = cfg->w >> !!i;
++        const unsigned h = cfg->h >> !!i;
++        if (!cfg->data[i] || ((uintptr_t)cfg->data[i] % DATA_ALIGN) ||
++            cfg->stride[i] <= 0 || cfg->stride[i] > INT_MAX ||
++            cfg->stride[i] % DATA_ALIGN ||
++            (size_t)w > SIZE_MAX / bytes ||
++            (size_t)cfg->stride[i] < (size_t)w * bytes ||
++            (size_t)cfg->stride[i] > (SIZE_MAX - 64) / h ||
++            cfg->data_size[i] < (size_t)cfg->stride[i] * h + 64)
++            return -EINVAL;
++        imported.w[i] = w;
++        imported.h[i] = h;
++        imported.data[i] = cfg->data[i];
++        imported.stride[i] = cfg->stride[i];
++    }
++
++    int err = vmaf_picture_priv_init(&imported);
++    if (err) return -ENOMEM;
++    err = vmaf_ref_init(&imported.ref);
++    if (err) {
++        free(imported.priv);
++        return err;
++    }
++    VmafPicturePrivate *priv = imported.priv;
++    priv->cookie = cfg->cookie;
++    priv->release_picture = release_imported_picture;
++    priv->release_import = cfg->release;
++    priv->buf_type = VMAF_PICTURE_BUFFER_TYPE_HOST;
++    *pic = imported;
++    return 0;
++}
++
+ int vmaf_picture_unref(VmafPicture *pic) {
+     if (!pic) return -EINVAL;
+     if (!pic->ref) return -EINVAL;
+--- a/libvmaf/src/feature/cambi.c
++++ b/libvmaf/src/feature/cambi.c
+@@ -748,7 +748,14 @@
+     if (in_w == out_w && in_h == out_h) {
+         if (pic->bpc == 10) {
+             // memcpy is faster in case the original bitdepth is already 10
+-            memcpy(out_data, data, stride * pic->h[0] * sizeof(uint16_t));
++            if (stride == out_stride) {
++                memcpy(out_data, data, stride * pic->h[0] * sizeof(uint16_t));
++            } else {
++                /* Imported AVFrames may have a different row pitch. */
++                for (unsigned i = 0; i < out_h; i++)
++                    memcpy(out_data + i * out_stride, data + i * stride,
++                           out_w * sizeof(uint16_t));
++            }
+         }
+         else {
+             for (unsigned i = 0; i < out_h; i++) {
+--- a/libvmaf/test/test_cambi.c
++++ b/libvmaf/test/test_cambi.c
+@@ -744,8 +744,43 @@
+     return NULL;
+ }
+ 
++static char *test_decimate_10b_different_strides()
++{
++    /* Input has more padding than output: the old bulk memcpy overran output.
++     * Reversing them checks short source stride without row mixing. */
++    for (unsigned reverse = 0; reverse < 2; reverse++) {
++        const unsigned w = 64, h = 12;
++        const size_t src_stride = reverse ? 128 : 192;
++        const size_t dst_stride = reverse ? 192 : 128;
++        uint8_t *src = aligned_malloc(src_stride * h, 32);
++        uint8_t *dst = aligned_malloc(dst_stride * h, 32);
++        mu_assert("padding test allocation failed", src && dst);
++        memset(src, 0xEE, src_stride * h);
++        memset(dst, 0xA5, dst_stride * h);
++        for (unsigned y = 0; y < h; y++)
++            for (unsigned x = 0; x < w; x++)
++                ((uint16_t *)(src + y * src_stride))[x] = (y * 67 + x) & 1023;
++        VmafPicture in = { .bpc = 10, .w = {w}, .h = {h},
++                           .stride = {src_stride}, .data = {src} };
++        VmafPicture out = { .bpc = 10, .w = {w}, .h = {h},
++                            .stride = {dst_stride}, .data = {dst} };
++        decimate_generic_uint16_and_convert_to_10b(&in, &out, w, h);
++        for (unsigned y = 0; y < h; y++) {
++            mu_assert("different-stride copy changed logical pixels",
++                      !memcmp(src + y * src_stride, dst + y * dst_stride, w * 2));
++            for (size_t x = w * 2; x < dst_stride; x++)
++                mu_assert("different-stride copy touched destination padding",
++                          dst[y * dst_stride + x] == 0xA5);
++        }
++        aligned_free(src);
++        aligned_free(dst);
++    }
++    return NULL;
++}
++
+ char *run_tests()
+ {
++    mu_run_test(test_decimate_10b_different_strides);
+     /* Preprocessing functions */
+     mu_run_test(test_anti_dithering_filter);
+     mu_run_test(test_decimate_generic);
+@@ -777,4 +812,4 @@
+     mu_run_test(test_get_vlt_luma);
+ 
+     return NULL;
+-}+}

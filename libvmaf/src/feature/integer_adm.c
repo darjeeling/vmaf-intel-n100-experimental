@@ -23,6 +23,9 @@
 #include "feature_extractor.h"
 #include "feature_name.h"
 #include "integer_adm.h"
+#if HAVE_INTEL_OPENCL
+#include "intel_opencl.h"
+#endif
 #include "log.h"
 
 #if ARCH_X86
@@ -38,6 +41,10 @@
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 
 typedef struct AdmState {
+#if HAVE_INTEL_OPENCL
+    VmafIntelOcl *intel_ocl;
+    int intel_error;
+#endif
     AdmBuffer buf;
     bool debug;
     bool adm_skip_aim;
@@ -2843,6 +2850,14 @@ void integer_compute_adm(AdmState *s, VmafPicture *ref_pic, VmafPicture *dis_pic
                          double adm_csf_scale, double adm_csf_diag_scale, double adm_noise_weight, bool adm_skip_aim, 
                          bool adm_skip_scale0)
 {
+#if HAVE_INTEL_OPENCL
+    int intel_ready = vmaf_intel_ocl_adm(s->intel_ocl,
+            ref_pic->data[0], ref_pic->stride[0],
+            dis_pic->data[0], dis_pic->stride[0]);
+    s->intel_error = intel_ready < 0 ? intel_ready : 0;
+    if (s->intel_error) return;
+#endif
+
     int w = ref_pic->w[0];
     int h = ref_pic->h[0];
 
@@ -2876,7 +2891,19 @@ void integer_compute_adm(AdmState *s, VmafPicture *ref_pic, VmafPicture *dis_pic
 		if(scale==0) {
             if (adm_skip_scale0) {
                 // skip scale 0 by downsampling by 2 using low-pass filters in DWT2
-                if (ref_pic->bpc == 8) {
+
+#if HAVE_INTEL_OPENCL
+    if (intel_ready > 0) {
+        vmaf_intel_ocl_adm_copy16(s->intel_ocl, 0,
+                buf->ref_dwt2.band_a, buf->ref_dwt2.band_v,
+                buf->ref_dwt2.band_h, buf->ref_dwt2.band_d, buf_stride);
+        vmaf_intel_ocl_adm_copy16(s->intel_ocl, 1,
+                buf->dis_dwt2.band_a, buf->dis_dwt2.band_v,
+                buf->dis_dwt2.band_h, buf->dis_dwt2.band_d, buf_stride);
+    } else
+#endif
+    {
+if (ref_pic->bpc == 8) {
                     adm_dwt2_8_lo(ref_pic->data[0], &buf->ref_dwt2, buf, w, h,
                             curr_ref_stride, buf_stride);
                     adm_dwt2_8_lo(dis_pic->data[0], &buf->dis_dwt2, buf, w, h,
@@ -2888,6 +2915,8 @@ void integer_compute_adm(AdmState *s, VmafPicture *ref_pic, VmafPicture *dis_pic
                     adm_dwt2_16_lo(dis_pic->data[0], &buf->dis_dwt2, buf, w, h,
                                 curr_dis_stride, buf_stride, dis_pic->bpc);
                 }
+    }
+
 
                 i16_to_i32(&buf->ref_dwt2, &buf->i4_ref_dwt2, w, h, buf_stride);
                 i16_to_i32(&buf->dis_dwt2, &buf->i4_dis_dwt2, w, h, buf_stride);
@@ -2897,7 +2926,19 @@ void integer_compute_adm(AdmState *s, VmafPicture *ref_pic, VmafPicture *dis_pic
                 den_scale = 1e-10;  // avoid divide by zero
             }
             else {
-                if (ref_pic->bpc == 8) {
+
+#if HAVE_INTEL_OPENCL
+    if (intel_ready > 0) {
+        vmaf_intel_ocl_adm_copy16(s->intel_ocl, 0,
+                buf->ref_dwt2.band_a, buf->ref_dwt2.band_v,
+                buf->ref_dwt2.band_h, buf->ref_dwt2.band_d, buf_stride);
+        vmaf_intel_ocl_adm_copy16(s->intel_ocl, 1,
+                buf->dis_dwt2.band_a, buf->dis_dwt2.band_v,
+                buf->dis_dwt2.band_h, buf->dis_dwt2.band_d, buf_stride);
+    } else
+#endif
+    {
+if (ref_pic->bpc == 8) {
                     s->dwt2_8(ref_pic->data[0], &buf->ref_dwt2, buf, w, h,
                               curr_ref_stride, buf_stride);
                     s->dwt2_8(dis_pic->data[0], &buf->dis_dwt2, buf, w, h,
@@ -2909,6 +2950,8 @@ void integer_compute_adm(AdmState *s, VmafPicture *ref_pic, VmafPicture *dis_pic
                     s->dwt2_16(dis_pic->data[0], &buf->dis_dwt2, buf, w, h,
                                 curr_dis_stride, buf_stride, dis_pic->bpc);
                 }
+    }
+
 
                 i16_to_i32(&buf->ref_dwt2, &buf->i4_ref_dwt2, w, h, buf_stride);
                 i16_to_i32(&buf->dis_dwt2, &buf->i4_dis_dwt2, w, h, buf_stride);
@@ -2945,8 +2988,22 @@ void integer_compute_adm(AdmState *s, VmafPicture *ref_pic, VmafPicture *dis_pic
             }
 		}
 		else {
-            s->adm_dwt2_s123_combined(i4_curr_ref_scale, i4_curr_dis_scale, buf, w, h, curr_ref_stride,
+
+#if HAVE_INTEL_OPENCL
+    if (intel_ready > 0) {
+        vmaf_intel_ocl_adm_copy32(s->intel_ocl, 0, scale,
+                buf->i4_ref_dwt2.band_a, buf->i4_ref_dwt2.band_v,
+                buf->i4_ref_dwt2.band_h, buf->i4_ref_dwt2.band_d, buf_stride);
+        vmaf_intel_ocl_adm_copy32(s->intel_ocl, 1, scale,
+                buf->i4_dis_dwt2.band_a, buf->i4_dis_dwt2.band_v,
+                buf->i4_dis_dwt2.band_h, buf->i4_dis_dwt2.band_d, buf_stride);
+    } else
+#endif
+    {
+        s->adm_dwt2_s123_combined(i4_curr_ref_scale, i4_curr_dis_scale, buf, w, h, curr_ref_stride,
                                    curr_dis_stride, buf_stride, scale);
+    }
+
 
 			w = (w + 1) / 2;
 			h = (h + 1) / 2;
@@ -3176,6 +3233,14 @@ static int init(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
                 fex->options, s);
     if (!s->feature_name_dict) goto fail;
 
+#if HAVE_INTEL_OPENCL
+    int intel_err = vmaf_intel_ocl_create(&s->intel_ocl, "adm", w, h, bpc);
+    if (intel_err) {
+        adm_buffer_free(&s->buf);
+        vmaf_dictionary_free(&s->feature_name_dict);
+        return intel_err;
+    }
+#endif
     return 0;
 
 fail:
@@ -3210,6 +3275,10 @@ static int extract(VmafFeatureExtractor *fex,
                         s->adm_enhn_gain_limit,
                         s->adm_norm_view_dist, s->adm_ref_display_height, &score_aim, s->adm_csf_mode, s->adm_csf_scale,
                         s->adm_csf_diag_scale, s->adm_noise_weight, s->adm_skip_aim, s->adm_skip_scale0);
+#if HAVE_INTEL_OPENCL
+    if (s->intel_error) return s->intel_error;
+#endif
+
 
     err |= vmaf_feature_collector_append_with_dict(feature_collector,
             s->feature_name_dict, "VMAF_integer_feature_adm2_score", score,
@@ -3281,6 +3350,9 @@ static int close(VmafFeatureExtractor *fex)
 {
     AdmState *s = fex->priv;
 
+#if HAVE_INTEL_OPENCL
+    vmaf_intel_ocl_destroy(&s->intel_ocl);
+#endif
     adm_buffer_free(&s->buf);
     vmaf_dictionary_free(&s->feature_name_dict);
 

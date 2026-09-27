@@ -28,6 +28,9 @@
 #include "feature_extractor.h"
 #include "feature_name.h"
 #include "integer_motion.h"
+#if HAVE_INTEL_OPENCL
+#include "intel_opencl.h"
+#endif
 #include "motion_blend_tools.h"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
@@ -50,6 +53,9 @@ typedef uint64_t (*motion_pipeline_fn)(const uint8_t *, ptrdiff_t,
                                        unsigned bpc);
 
 typedef struct MotionState {
+#if HAVE_INTEL_OPENCL
+    VmafIntelOcl *intel_ocl;
+#endif
     int32_t *y_row;
     unsigned w, h, bpc;
     motion_pipeline_fn pipeline;
@@ -296,6 +302,15 @@ static int init(VmafFeatureExtractor *fex, enum VmafPixelFormat pix_fmt,
     }
 #endif
 
+#if HAVE_INTEL_OPENCL
+    int intel_err = vmaf_intel_ocl_create(&s->intel_ocl, "motion", w, h, bpc);
+    if (intel_err) {
+        free(s->y_row);
+        s->y_row = NULL;
+        vmaf_dictionary_free(&s->feature_name_dict);
+        return intel_err;
+    }
+#endif
     return 0;
 }
 
@@ -328,7 +343,14 @@ static int extract(VmafFeatureExtractor *fex,
         const uint8_t *prev_data = (const uint8_t *)prev->data[0];
         const uint8_t *cur_data = (const uint8_t *)ref_pic->data[0];
     
-        uint64_t sad = s->pipeline(prev_data, prev->stride[0],
+        uint64_t sad;
+#if HAVE_INTEL_OPENCL
+        int intel_rc = vmaf_intel_ocl_motion(s->intel_ocl,
+                prev_data, prev->stride[0], cur_data, ref_pic->stride[0], &sad);
+        if (intel_rc < 0) return intel_rc;
+        if (!intel_rc)
+#endif
+        sad = s->pipeline(prev_data, prev->stride[0],
     			       cur_data, ref_pic->stride[0],
     			       s->y_row, w, h, s->bpc);
     
@@ -354,6 +376,9 @@ write_score:
 static int close_fex(VmafFeatureExtractor *fex)
 {
     MotionState *s = fex->priv;
+#if HAVE_INTEL_OPENCL
+    vmaf_intel_ocl_destroy(&s->intel_ocl);
+#endif
     free(s->y_row);
     return vmaf_dictionary_free(&s->feature_name_dict);
 }

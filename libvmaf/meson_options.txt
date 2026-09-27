@@ -53,3 +53,6 @@ option('enable_checkasm',
     value: false,
     description: 'Build the checkasm SIMD correctness/benchmark test suite ' +
                  '(fetches the checkasm subproject)')
+
+option('enable_intel_opencl', type: 'boolean', value: false,
+       description: 'Experimental Linux Intel OpenCL ADM DWT and motion backend')

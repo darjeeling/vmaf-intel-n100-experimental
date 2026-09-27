@@ -1,0 +1,152 @@
+--- a/libavfilter/vf_libvmaf.c
++++ b/libavfilter/vf_libvmaf.c
+@@ -27,6 +27,7 @@
+ #include "config_components.h"
+ 
+ #include <libvmaf.h>
++#include <inttypes.h>
+ 
+ #include "libavutil/avstring.h"
+ #include "libavutil/mem.h"
+@@ -63,6 +64,11 @@
+     unsigned bpc;
+     int use_picture_pool;
+     int picture_pool_initialized;
++    int picture_pool_size;
++    int use_picture_wrap;
++    uint64_t wrapped_pictures;
++    uint64_t copied_pictures;
++    uint64_t wrap_fallbacks;
+ #if CONFIG_LIBVMAF_CUDA_FILTER
+     VmafCudaState *cu_state;
+ #endif
+@@ -80,6 +86,8 @@
+     {"model",  "Set the model to be used for computing vmaf.",                          OFFSET(model_cfg), AV_OPT_TYPE_STRING, {.str="version=vmaf_v0.6.1"}, 0, 1, FLAGS},
+     {"feature",  "Set the feature to be used for computing vmaf.",                      OFFSET(feature_cfg), AV_OPT_TYPE_STRING, {.str=NULL}, 0, 1, FLAGS},
+     {"picture_pool", "Reuse libvmaf input picture buffers (experimental).", OFFSET(use_picture_pool), AV_OPT_TYPE_BOOL, {.i64=0}, 0, 1, FLAGS},
++    {"picture_pool_size", "Pool capacity; 0 uses the CLI minimum (experimental).", OFFSET(picture_pool_size), AV_OPT_TYPE_INT, {.i64=0}, 0, 256, FLAGS},
++    {"picture_wrap", "Import aligned 1080p planar AVFrame buffers (experimental).", OFFSET(use_picture_wrap), AV_OPT_TYPE_BOOL, {.i64=0}, 0, 1, FLAGS},
+     { NULL }
+ };
+ 
+@@ -108,10 +116,74 @@
+     }
+ }
+ 
++static void release_imported_avframe(void *cookie)
++{
++    AVFrame *frame = cookie;
++    av_frame_free(&frame);
++}
++
++static int wrap_picture_data(AVFrame *src, VmafPicture *dst, unsigned bpc)
++{
++    VmafPictureImportConfiguration cfg = {
++        .pix_fmt = VMAF_PIX_FMT_YUV420P,
++        .bpc = bpc,
++        .w = src->width,
++        .h = src->height,
++        .release = release_imported_avframe,
++    };
++    /* This experiment audits only v1 CPU extractors at this frame shape.
++     * Other shapes, formats, unaligned and non-refcounted inputs fall back.
++     * No hardware surface is imported: the input is already planar host YUV. */
++    if (src->width != 1920 || src->height != 1080 ||
++        (src->format != AV_PIX_FMT_YUV420P &&
++         src->format != AV_PIX_FMT_YUV420P10LE) || !src->buf[0])
++        return AVERROR(ENOSYS);
++
++    for (unsigned i = 0; i < 3; i++) {
++        AVBufferRef *buf = av_frame_get_plane_buffer(src, i);
++        uintptr_t start, data;
++        size_t offset;
++        if (!buf || !src->data[i] || src->linesize[i] <= 0)
++            return AVERROR(EINVAL);
++        start = (uintptr_t)buf->data;
++        data = (uintptr_t)src->data[i];
++        if (data < start || data - start > buf->size)
++            return AVERROR(EINVAL);
++        offset = data - start;
++        cfg.data[i] = src->data[i];
++        cfg.stride[i] = src->linesize[i];
++        cfg.data_size[i] = buf->size - offset;
++    }
++
++    /* av_frame_clone retains AVBufferRefs without copying pixel storage. */
++    AVFrame *owned = av_frame_clone(src);
++    if (!owned) return AVERROR(ENOMEM);
++    cfg.cookie = owned;
++    int err = vmaf_picture_import(dst, &cfg);
++    if (err)
++        av_frame_free(&owned); /* Import failure did not take ownership. */
++    return err;
++}
++
+ static int copy_picture_data(LIBVMAFContext *s, AVFrame *src, VmafPicture *dst)
+ {
+     const int bytes_per_value = s->bpc > 8 ? 2 : 1;
+     int err;
++
++    if (s->use_picture_wrap) {
++        err = wrap_picture_data(src, dst, s->bpc);
++        if (!err) {
++            s->wrapped_pictures++;
++            return 0;
++        }
++        if (!s->wrap_fallbacks)
++            av_log(s, AV_LOG_WARNING,
++                   "picture_wrap fallback to copy: error=%d, shape=%dx%d, "
++                   "format=%s, strides=%d/%d/%d\n", err, src->width,
++                   src->height, av_get_pix_fmt_name(src->format),
++                   src->linesize[0], src->linesize[1], src->linesize[2]);
++        s->wrap_fallbacks++;
++    }
+ 
+     if (s->use_picture_pool)
+         err = vmaf_fetch_preallocated_picture(s->vmaf, dst);
+@@ -136,6 +208,7 @@
+         }
+     }
+ 
++    s->copied_pictures++;
+     return 0;
+ }
+ 
+@@ -161,6 +234,16 @@
+     }
+ 
+     if (s->use_picture_pool && !s->picture_pool_initialized) {
++        const uint64_t min_count = s->n_threads > 0 ?
++            ((uint64_t)s->n_threads + 1) * 2 + 1 : 4;
++        if (min_count > UINT_MAX ||
++            (s->picture_pool_size && s->picture_pool_size < min_count)) {
++            av_log(ctx, AV_LOG_ERROR,
++                   "picture_pool_size must be 0 or at least %"PRIu64" "
++                   "for n_threads=%d; smaller pools can deadlock.\n",
++                   min_count, s->n_threads);
++            return AVERROR(EINVAL);
++        }
+         VmafPictureConfiguration cfg = {
+             .pic_params = {
+                 .w = ref->width,
+@@ -169,7 +252,7 @@
+                 .pix_fmt = pix_fmt_map(ref->format),
+             },
+             /* Match the libvmaf CLI: queued frame pairs plus retained refs. */
+-            .pic_cnt = s->n_threads > 0 ? (s->n_threads + 1) * 2 + 1 : 4,
++            .pic_cnt = s->picture_pool_size ? s->picture_pool_size : min_count,
+         };
+         err = vmaf_preallocate_pictures(s->vmaf, cfg);
+         if (err) {
+@@ -623,6 +706,11 @@
+     }
+ 
+ clean_up:
++    av_log(ctx, s->use_picture_wrap ? AV_LOG_WARNING : AV_LOG_INFO,
++           "VMAF pictures: wrapped=%"PRIu64" copied=%"PRIu64
++           " fallback=%"PRIu64" pool=%d pool_size=%d\n",
++           s->wrapped_pictures, s->copied_pictures, s->wrap_fallbacks,
++           s->use_picture_pool, s->picture_pool_size);
+     if (s->model) {
+         for (unsigned i = 0; i < s->model_cnt; i++) {
+             if (s->model[i])

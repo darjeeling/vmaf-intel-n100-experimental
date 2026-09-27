@@ -1,0 +1,112 @@
+--- a/libavfilter/vf_hwmap.c
++++ b/libavfilter/vf_hwmap.c
+@@ -35,6 +35,8 @@
+     int            mode;
+     char          *derive_device_type;
+     int            reverse;
++    int            detach_sw;
++    uint64_t       detached_frames;
+ } HWMapContext;
+ 
+ static int hwmap_query_formats(const AVFilterContext *avctx,
+@@ -73,6 +75,32 @@
+     device = avctx->hw_device_ctx;
+     device_is_derived = 0;
+ 
++    if (ctx->detach_sw) {
++        /* Experimental forward VAAPI/NV12 read-only mapping for an immediate
++         * software consumer. All write/reverse/derived mappings keep the
++         * original semantics and cannot enable this option. */
++        const int allowed_mode = AV_HWFRAME_MAP_READ | AV_HWFRAME_MAP_DIRECT;
++        if (!inl->hw_frames_ctx || inlink->format != AV_PIX_FMT_VAAPI ||
++            outlink->format != AV_PIX_FMT_NV12 || ctx->reverse ||
++            ctx->derive_device_type || !(ctx->mode & AV_HWFRAME_MAP_READ) ||
++            (ctx->mode & ~allowed_mode)) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "detach_sw requires forward VAAPI -> NV12 with mode=read "
++                   "or read+direct, without reverse or derive_device.\n");
++            err = AVERROR(EINVAL);
++            goto fail;
++        }
++        hwfc = (AVHWFramesContext *)inl->hw_frames_ctx->data;
++        if (hwfc->format != AV_PIX_FMT_VAAPI ||
++            hwfc->sw_format != AV_PIX_FMT_NV12 ||
++            hwfc->device_ctx->type != AV_HWDEVICE_TYPE_VAAPI) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "detach_sw requires a VAAPI frame context backed by NV12.\n");
++            err = AVERROR(EINVAL);
++            goto fail;
++        }
++    }
++
+     if (inl->hw_frames_ctx) {
+         hwfc = (AVHWFramesContext*)inl->hw_frames_ctx->data;
+ 
+@@ -245,10 +273,16 @@
+         return AVERROR(EINVAL);
+     }
+ 
+-    outl->hw_frames_ctx = av_buffer_ref(ctx->hwframes_ref);
+-    if (!outl->hw_frames_ctx) {
+-        err = AVERROR(ENOMEM);
+-        goto fail;
++    if (ctx->detach_sw) {
++        /* The downstream link carries software NV12. Keep the mapping
++         * context private; swscale rejects an asymmetric hardware context. */
++        av_buffer_unref(&outl->hw_frames_ctx);
++    } else {
++        outl->hw_frames_ctx = av_buffer_ref(ctx->hwframes_ref);
++        if (!outl->hw_frames_ctx) {
++            err = AVERROR(ENOMEM);
++            goto fail;
++        }
+     }
+ 
+     outlink->w = inlink->w;
+@@ -351,6 +385,24 @@
+     if (err < 0)
+         goto fail;
+ 
++    if (ctx->detach_sw) {
++        if (input->format != AV_PIX_FMT_VAAPI ||
++            map->format != AV_PIX_FMT_NV12 || !map->buf[0] ||
++            !map->data[0] || !map->data[1] ||
++            map->linesize[0] <= 0 || map->linesize[1] <= 0) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "detach_sw received an unexpected mapped storage layout.\n");
++            err = AVERROR(EINVAL);
++            goto fail;
++        }
++        /* av_hwframe_map's HWMapDescriptor lives in buf[0]. It retains the
++         * source frame and hardware context and unmaps on final buffer unref.
++         * Only remove the frame's separate context reference; do not change
++         * buf[], data[], linesize[], or the descriptor's ownership. */
++        av_buffer_unref(&map->hw_frames_ctx);
++        ctx->detached_frames++;
++    }
++
+     av_frame_free(&input);
+ 
+     av_log(ctx, AV_LOG_DEBUG, "Filter output: %s, %ux%u (%"PRId64").\n",
+@@ -368,6 +420,11 @@
+ static av_cold void hwmap_uninit(AVFilterContext *avctx)
+ {
+     HWMapContext *ctx = avctx->priv;
++
++    if (ctx->detach_sw && ctx->detached_frames)
++        av_log(avctx, AV_LOG_WARNING,
++               "HWMap detach_sw: frames=%"PRIu64" mode=%d\n",
++               ctx->detached_frames, ctx->mode);
+ 
+     av_buffer_unref(&ctx->hwframes_ref);
+ }
+@@ -399,6 +456,9 @@
+     { "reverse", "Map in reverse (create and allocate in the sink)",
+       OFFSET(reverse), AV_OPT_TYPE_INT,
+       { .i64 = 0 }, 0, 1, FLAGS },
++    { "detach_sw", "Expose read-only VAAPI/NV12 mapping as software (experimental)",
++      OFFSET(detach_sw), AV_OPT_TYPE_BOOL,
++      { .i64 = 0 }, 0, 1, FLAGS },
+ 
+     { NULL }
+ };

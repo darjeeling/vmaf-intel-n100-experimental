@@ -41,6 +41,7 @@ regular FFmpeg or libvmaf source tree.
 | AVFrame picture import | picture-import.patch, ffmpeg-picture-wrap.patch | Retain refcounted input buffers and avoid the FFmpeg-to-libvmaf pixel copy on supported planar frames. Off by default. |
 | VAAPI mapping | ffmpeg-hwmap-detach-sw.patch | Permit read-only VAAPI-to-NV12 mapping to feed the software conversion path. Off by default. |
 | v3 shared-reference Motion | v3-reference-motion-cache.patch | Experimental process-local Motion SAD reuse for one reference split to three comparisons. Enabled by VMAF_N100_SHARED_MOTION=1; see the [v3 report](../../../resource/doc/intel_n100_vmaf_v3_reference_sharing.md) for limits and results. |
+| v4 ADM buffer reuse ([issue #959](https://github.com/Netflix/vmaf/issues/959)) | v4-adm-buffer-reuse.patch | Apply after v2-adm-combined.patch alongside v3-reference-motion-cache.patch. Reuse reference DWT H/V/D storage for CSF after its final read without changing arithmetic. See the [v4 report](../../../resource/doc/intel_n100_vmaf_v4_adm_memory.ko.md). |
 
 The direct mapping patch accepts only forward read mappings; it is not a
 general writable mapping facility. Picture import is bounded to 1920x1080

@@ -1,0 +1,34 @@
+diff --git a/libvmaf/src/feature/integer_adm.c b/libvmaf/src/feature/integer_adm.c
+index 11dc45fc..3ccb51f7 100644
+--- a/libvmaf/src/feature/integer_adm.c
++++ b/libvmaf/src/feature/integer_adm.c
+@@ -3125,9 +3125,10 @@ int adm_buffer_alloc(AdmBuffer *buf, int w, int h)
+     buf->ind_size_y   = ALIGN_CEIL(((h + 1) / 2) * sizeof(int32_t));
+     size_t buf_sz_one = buf->ind_size_x * ((h + 1) / 2);
+ 
+-    buf->data_buf = aligned_malloc(buf_sz_one * NUM_BUFS_ADM, MAX_ALIGN);
++    /* #959 experiment: reuse reference H/V/D storage after denominator work. */
++    buf->data_buf = aligned_malloc(buf_sz_one * (NUM_BUFS_ADM - 4), MAX_ALIGN);
+     if (!buf->data_buf) goto fail;
+-    memset(buf->data_buf, 0, buf_sz_one * NUM_BUFS_ADM);
++    memset(buf->data_buf, 0, buf_sz_one * (NUM_BUFS_ADM - 4));
+     buf->tmp_ref = aligned_malloc(ALIGN_CEIL(w * sizeof(int32_t)) * 4, MAX_ALIGN);
+     if (!buf->tmp_ref) goto fail;
+     buf->buf_x_orig = aligned_malloc(buf->ind_size_x * 4, MAX_ALIGN);
+@@ -3141,14 +3142,14 @@ int adm_buffer_alloc(AdmBuffer *buf, int w, int h)
+     data_top = init_dwt_band_hvd(&buf->decouple_r, data_top, buf_sz_one / 2);
+     data_top = init_dwt_band_hvd(&buf->decouple_a, data_top, buf_sz_one / 2);
+     data_top = init_dwt_band_hvd(&buf->csf_a, data_top, buf_sz_one / 2);
+-    data_top = init_dwt_band_hvd(&buf->csf_f, data_top, buf_sz_one / 2);
++    buf->csf_f = buf->ref_dwt2;
+ 
+     data_top = i4_init_dwt_band(&buf->i4_ref_dwt2, data_top, buf_sz_one);
+     data_top = i4_init_dwt_band(&buf->i4_dis_dwt2, data_top, buf_sz_one);
+     data_top = i4_init_dwt_band_hvd(&buf->i4_decouple_r, data_top, buf_sz_one);
+     data_top = i4_init_dwt_band_hvd(&buf->i4_decouple_a, data_top, buf_sz_one);
+     data_top = i4_init_dwt_band_hvd(&buf->i4_csf_a, data_top, buf_sz_one);
+-    data_top = i4_init_dwt_band_hvd(&buf->i4_csf_f, data_top, buf_sz_one);
++    buf->i4_csf_f = buf->i4_ref_dwt2;
+ 
+     void *ind_buf_y = buf->buf_y_orig;
+     init_index(buf->ind_y, ind_buf_y, buf->ind_size_y);

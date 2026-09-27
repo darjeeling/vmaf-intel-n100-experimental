@@ -4,6 +4,8 @@
 > decoding, v4 combines shared-reference work, [ADM buffer reuse from issue
 > #959](tools/experimental/n100/v4-adm-buffer-reuse.patch), and [gain-one ADM
 > clipping from issue #952](tools/experimental/n100/v4-adm-gain1-clip.patch).
+> The additional media results validate the same v4 binary; no v5 code
+> or binary has been created.
 > Three 300-frame comparisons took **42.225 → 23.210 s (45.03% less time)**
 > and **42.123 → 22.997 s (45.41% less time)** versus the installed FFmpeg
 > (three-run medians). Input A: 1920×1080 8-bit, 24000/1001 fps, about
@@ -13,19 +15,31 @@
 > differences **+0.001816** and **+0.001401 points** against an existing v2
 > full-length oracle for one quality. These differences do not accumulate.
 > See the [v4 report](resource/doc/intel_n100_vmaf_v4_adm_memory.ko.md) for
-> conditions, memory measurements, and validation limits.
+> conditions, memory measurements, and validation limits. On additional 4K
+> camera cases, v4 was slower in single-comparison 4K-to-1080p paths, but
+> native-4K comparisons took **13.10% and 20.27% less time** than the
+> installed original FFmpeg (**15.08% and 25.43% more fps**; 300-frame,
+> three-run medians). Native 4K raised v4 peak RSS **3.32× and 3.26×** over
+> its 4K-to-1080p path; see the report for installed-binary memory growth.
+> The 45% result does not apply to those workloads.
 >
 > **Intel N100 v4 테스트 (한국어)** — CPU 두 코어와 VAAPI 디코딩 조건에서
 > [이슈 #959의 ADM 버퍼 재사용](tools/experimental/n100/v4-adm-buffer-reuse.patch)과
 > [이슈 #952의 gain=1 ADM 단순화](tools/experimental/n100/v4-adm-gain1-clip.patch)를
-> 원본 공유 경로에 결합했다. 설치 FFmpeg 대비 300프레임×3개 비교 시간은
+> 원본 공유 경로에 결합했다. 추가 영상 결과도 같은 v4 바이너리를
+> 검증한 것이며 v5 코드는 없다. 설치 FFmpeg 대비 300프레임×3개 비교 시간은
 > **42.225→23.210초(45.03% 단축)**, **42.123→22.997초(45.41% 단축)**였다
 > (3회 중앙값). A는 1920×1080 8-bit·24000/1001fps·약 4분 7초,
 > B는 1920×1080 8-bit·60000/1001fps·약 3분 13초다.
 > **점수는 완전히 같지 않다.** 기존 v2의 중간 품질 전편 결과와 비교한
 > 프레임별 VMAF 최대 차이는 **0.002454점**, **0.002151점**, 영상 평균 차이는
 > **+0.001816점**, **+0.001401점**이었다. 프레임별 차이는 누적되지 않는다.
-> 조건·메모리·검증 범위는 [v4 보고서](resource/doc/intel_n100_vmaf_v4_adm_memory.ko.md)에 있다.
+> 4K 카메라 단일 비교에서 4K→1080p 축소 경로는 v4가 느렸지만,
+> 원본 4K 해상도에서는 설치된 원본 FFmpeg보다 **시간이 13.10%·20.27% 줄고**
+> **처리 fps는 15.08%·25.43% 늘었다**(300프레임, 3회 중앙값).
+> 원본 4K 계산 시 v4 최대 RSS는 4K→1080p 경로보다 **3.32배·3.26배**로 늘었다.
+> 앞의 45% 단축은 해당 작업에 적용되지 않는다. 조건·메모리·추가 테스트는
+> [v4 보고서](resource/doc/intel_n100_vmaf_v4_adm_memory.ko.md)에 있다.
 
 > **Experimental Intel N100 v3 test (English)** — With two CPU cores and VAAPI
 > decoding, sharing one reference decode and reference Motion work across three
